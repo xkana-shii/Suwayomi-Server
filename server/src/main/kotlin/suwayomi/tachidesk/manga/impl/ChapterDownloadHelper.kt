@@ -84,4 +84,59 @@ object ChapterDownloadHelper {
             val fileName = "$scanlatorPart${chapter.name}"
             chapter to fileName
         }
+
+    // Added functions requested: return CBZ stream / metadata (filename + size).
+    fun getCbzForDownload(
+        chapterId: Int,
+        markAsRead: Boolean?,
+    ): Triple<InputStream, String, Long> {
+        // Build chapter info and filename including manga title and .cbz extension
+        val (chapterData, baseName) = transaction {
+            val row =
+                (ChapterTable innerJoin MangaTable)
+                    .select(ChapterTable.columns + MangaTable.columns)
+                    .where { ChapterTable.id eq chapterId }
+                    .firstOrNull() ?: throw IllegalArgumentException("ChapterId $chapterId not found")
+            val chapter = ChapterTable.toDataClass(row)
+            val mangaTitle = row[MangaTable.title]
+            val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
+            val fileName = "$mangaTitle - $scanlatorPart${chapter.name}.cbz"
+            chapter to fileName
+        }
+
+        val cbzStreamWithSize = provider(chapterData.mangaId, chapterData.id).getAsArchiveStream()
+
+        if (markAsRead == true) {
+            Chapter.modifyChapter(
+                chapterData.mangaId,
+                chapterData.index,
+                isRead = true,
+                isBookmarked = null,
+                isFillermarked = null,
+                markPrevRead = null,
+                lastPageRead = null,
+            )
+        }
+
+        return Triple(cbzStreamWithSize.first, baseName, cbzStreamWithSize.second)
+    }
+
+    fun getCbzMetadataForDownload(chapterId: Int): Pair<String, Long> { // fileName, fileSize
+        val (chapterData, fileName) = transaction {
+            val row =
+                (ChapterTable innerJoin MangaTable)
+                    .select(ChapterTable.columns + MangaTable.columns)
+                    .where { ChapterTable.id eq chapterId }
+                    .firstOrNull() ?: throw IllegalArgumentException("ChapterId $chapterId not found")
+            val chapter = ChapterTable.toDataClass(row)
+            val mangaTitle = row[MangaTable.title]
+            val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
+            val fullName = "$mangaTitle - $scanlatorPart${chapter.name}.cbz"
+            chapter to fullName
+        }
+
+        val fileSize = provider(chapterData.mangaId, chapterData.id).getArchiveSize()
+
+        return Pair(fileName, fileSize)
+    }
 }

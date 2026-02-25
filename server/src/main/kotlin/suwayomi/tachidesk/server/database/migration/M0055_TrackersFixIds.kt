@@ -17,7 +17,7 @@ import suwayomi.tachidesk.server.serverConfig
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 @Suppress("ClassName", "unused")
-class M0054_TrackersFixIds : SQLMigration() {
+class M0055_TrackersFixIds : SQLMigration() {
     private val TrackRecordTable by lazy { "TrackRecord".toSqlName() }
     private val SyncIdColumn by lazy { "sync_id".toSqlName() }
     private val LibraryIdColumn by lazy { "library_id".toSqlName() }
