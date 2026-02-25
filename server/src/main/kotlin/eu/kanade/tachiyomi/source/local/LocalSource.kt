@@ -2,6 +2,13 @@
 
 package eu.kanade.tachiyomi.source.local
 
+/*
+ * Copyright (C) Contributors to the Suwayomi project
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.local.filter.OrderBy
@@ -315,6 +322,14 @@ class LocalSource(
                             epub.fillChapterMetadata(this)
                         }
                     }
+
+                    // Attempt to read ComicInfo metadata for this chapter (directory or archive)
+                    try {
+                        applyComicInfoToChapterIfPresent(chapterFile, this)
+                    } catch (e: Throwable) {
+                        // Do not fail chapter list because of metadata parsing issues; just log and continue.
+                        logger.debug(e) { "ComicInfo metadata parse failed for ${chapterFile.path}" }
+                    }
                 }
             }.sortedWith { c1, c2 ->
                 val c = c2.chapter_number.compareTo(c1.chapter_number)
@@ -365,6 +380,75 @@ class LocalSource(
                 pages
             }
         }
+
+    /**
+     * Try to find a ComicInfo.xml for the given chapter file and, if present, apply decoded metadata to the SChapter.
+     * Supports:
+     *  - directory: look for "<chapterFolder>/ComicInfo.xml"
+     *  - zip/cbz: look for a root entry "ComicInfo.xml" (case-insensitive).
+     *  - rar/cbr: look for a header with name "ComicInfo.xml" (case-insensitive).
+     *
+     * Non-fatal: any parsing error is logged by caller; this function can throw to allow caller to log context.
+     */
+    @OptIn(ExperimentalXmlUtilApi::class)
+    private fun applyComicInfoToChapterIfPresent(chapterFile: File, chapter: SChapter) {
+        try {
+            if (chapterFile.isDirectory) {
+                val ci = File(chapterFile, COMIC_INFO_FILE)
+                if (ci.exists() && ci.isFile) {
+                    ci.inputStream().use { stream ->
+                        val comicInfo =
+                            KtXmlReader(stream, StandardCharsets.UTF_8.name()).use {
+                                xml.decodeFromReader<ComicInfo>(it)
+                            }
+                        chapter.copyFromComicInfo(comicInfo)
+                    }
+                }
+            } else {
+                val lowerName = chapterFile.name.lowercase()
+                // Zip/CBZ
+                if (lowerName.endsWith(".zip") || lowerName.endsWith(".cbz")) {
+                    ZipFile.builder().setFile(chapterFile).get().use { zip ->
+                        val entry = zip.getEntry(COMIC_INFO_FILE)
+                            ?: zip.entries
+                                .toList()
+                                .firstOrNull { it.name.equals(COMIC_INFO_FILE, ignoreCase = true) }
+
+                        if (entry != null) {
+                            zip.getInputStream(entry).use { entryStream ->
+                                val comicInfo =
+                                    KtXmlReader(entryStream, StandardCharsets.UTF_8.name()).use {
+                                        xml.decodeFromReader<ComicInfo>(it)
+                                    }
+                                chapter.copyFromComicInfo(comicInfo)
+                            }
+                        }
+                    }
+                } else if (lowerName.endsWith(".rar") || lowerName.endsWith(".cbr")) {
+                    // RAR/CBR: use JunrarArchive (already available in the repo)
+                    JunrarArchive(chapterFile).use { rar ->
+                        val header = rar.fileHeaders
+                            .firstOrNull { it.fileName.equals(COMIC_INFO_FILE, ignoreCase = true) }
+
+                        if (header != null) {
+                            rar.getInputStream(header).use { entryStream ->
+                                val comicInfo =
+                                    KtXmlReader(entryStream, StandardCharsets.UTF_8.name()).use {
+                                        xml.decodeFromReader<ComicInfo>(it)
+                                    }
+                                chapter.copyFromComicInfo(comicInfo)
+                            }
+                        }
+                    }
+                } else {
+                    // epub is already handled earlier
+                }
+            }
+        } catch (e: Throwable) {
+            // Rethrow to allow caller to log with context or swallow if desired
+            throw e
+        }
+    }
 
     fun getFormat(chapter: SChapter): Format {
         try {

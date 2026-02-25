@@ -3,7 +3,6 @@ package suwayomi.tachidesk.manga.impl.download.fileProvider.impl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
-import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.apache.commons.compress.archivers.zip.ZipFile
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -14,11 +13,14 @@ import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.impl.util.getMangaDownloadDir
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.FileDeletionHelper
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.ApplicationDirs
 import uy.kohesive.injekt.injectLazy
 import java.io.File
+import java.io.FileInputStream
 import java.io.InputStream
 import java.util.zip.Deflater
 
@@ -29,20 +31,33 @@ class ArchiveProvider(
     chapterId: Int,
 ) : ChaptersFilesProvider<FileType.ZipFile>(mangaId, chapterId) {
     override fun getImageFiles(): List<FileType.ZipFile> {
-        val zipFile = ZipFile.builder().setFile(getChapterCbzPath(mangaId, chapterId)).get()
-        return zipFile.entries.toList().map { FileType.ZipFile(it) }
+        // Try existing candidate cbz first
+        val existingCbz = resolveExistingChapterCbzPath(mangaId, chapterId)
+        val cbzPath = existingCbz ?: getChapterCbzPath(mangaId, chapterId)
+        val cbzFile = File(cbzPath)
+        val zipFile = ZipFile.builder().setFile(cbzFile).get()
+
+        // Build a list of entries from the zip enumeration to avoid type inference issues
+        val entries = mutableListOf<org.apache.commons.compress.archivers.zip.ZipArchiveEntry>()
+        val enumer = zipFile.entries
+        while (enumer.hasMoreElements()) {
+            val e = enumer.nextElement() as org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+            entries.add(e)
+        }
+        return entries.map { FileType.ZipFile(it) }
     }
 
     override fun getImageInputStream(image: FileType.ZipFile): InputStream =
         ZipFile
             .builder()
-            .setFile(getChapterCbzPath(mangaId, chapterId))
+            .setFile(File(resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId)))
             .get()
             .getInputStream(image.entry)
 
     override fun extractExistingDownload() {
-        val outputFile = File(getChapterCbzPath(mangaId, chapterId))
-        val chapterDownloadFolder = File(getChapterDownloadPath(mangaId, chapterId))
+        val existingCbz = resolveExistingChapterCbzPath(mangaId, chapterId)
+        val outputFile = if (existingCbz != null) File(existingCbz) else File(getChapterCbzPath(mangaId, chapterId))
+        val chapterDownloadFolder = File(resolveExistingChapterDownloadFolder(mangaId, chapterId) ?: getChapterDownloadPath(mangaId, chapterId))
 
         if (!outputFile.exists()) {
             return
@@ -61,16 +76,19 @@ class ArchiveProvider(
             outputFile.createNewFile()
         }
 
+        // Note: createComicInfoFile already executed in the download flow before this method,
+        // so the cache folder should contain ComicInfo.xml if available.
+
         ZipArchiveOutputStream(outputFile.outputStream()).use { zipOut ->
             zipOut.setMethod(ZipArchiveOutputStream.DEFLATED)
             zipOut.setLevel(Deflater.DEFAULT_COMPRESSION)
             if (chapterCacheFolder.isDirectory) {
-                chapterCacheFolder.listFiles()?.sortedBy { it.name }?.forEach {
-                    val entry = ZipArchiveEntry(it.name)
+                chapterCacheFolder.listFiles()?.sortedBy { it.name }?.forEach { file ->
+                    val entry = ZipArchiveEntry(file.name)
                     entry.time = 0L
                     try {
                         zipOut.putArchiveEntry(entry)
-                        it.inputStream().use { inputStream ->
+                        file.inputStream().use { inputStream ->
                             inputStream.copyTo(zipOut)
                         }
                     } finally {
@@ -86,56 +104,57 @@ class ArchiveProvider(
     }
 
     override fun delete(): Boolean {
-        val cbzFile = File(getChapterCbzPath(mangaId, chapterId))
-        if (!cbzFile.exists()) {
-            return true
+        val cbzFile = File(resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId))
+        val deleted = if (cbzFile.exists()) {
+            cbzFile.delete()
+        } else {
+            false
         }
 
-        val cbzDeleted = cbzFile.delete()
-        if (cbzDeleted) {
+        if (deleted) {
             transaction {
                 ChapterTable.update({ ChapterTable.id eq chapterId }) {
                     it[koreaderHash] = null
                 }
             }
+            FileDeletionHelper.cleanupParentFoldersFor(cbzFile, applicationDirs.mangaDownloadsRoot)
         }
-        FileDeletionHelper.cleanupParentFoldersFor(cbzFile, applicationDirs.mangaDownloadsRoot)
-        return cbzDeleted
+
+        return deleted
     }
 
     override fun getAsArchiveStream(): Pair<InputStream, Long> {
-        val cbzFile =
-            File(getChapterCbzPath(mangaId, chapterId))
-                .takeIf { it.exists() }
-                ?: throw IllegalArgumentException("CBZ file not found for chapter ID: $chapterId (Manga ID: $mangaId)")
-
-        return cbzFile.inputStream() to cbzFile.length()
+        val cbzPath = resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId)
+        val file = File(cbzPath)
+        if (!file.exists() || !file.isFile) {
+            throw IllegalArgumentException("CBZ for chapter ID $chapterId not found")
+        }
+        return FileInputStream(file) to file.length()
     }
 
     override fun getArchiveSize(): Long {
-        val cbzFile = File(getChapterCbzPath(mangaId, chapterId))
-        return if (cbzFile.exists()) cbzFile.length() else 0L
+        val cbzPath = resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId)
+        val file = File(cbzPath)
+        return if (file.exists() && file.isFile) file.length() else 0L
     }
 
-    private fun extractCbzFile(
-        cbzFile: File,
-        chapterFolder: File,
-    ) {
-        if (!chapterFolder.exists()) chapterFolder.mkdirs()
-        ZipArchiveInputStream(cbzFile.inputStream()).use { zipInputStream ->
-            var zipEntry = zipInputStream.nextEntry
-            while (zipEntry != null) {
-                val file = File(chapterFolder, zipEntry.name)
-                if (!file.exists()) {
-                    file.parentFile.mkdirs()
-                    file.createNewFile()
+    // Helper to extract cbz to folder
+    private fun extractCbzFile(cbz: File, destDir: File) {
+        destDir.mkdirs()
+        ZipFile.builder().setFile(cbz).get().use { zip ->
+            val enumer = zip.entries
+            while (enumer.hasMoreElements()) {
+                val entry = enumer.nextElement() as ZipArchiveEntry
+                val file = File(destDir, entry.name)
+                if (!entry.isDirectory) {
+                    file.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        file.outputStream().use { out ->
+                            input.copyTo(out)
+                        }
+                    }
                 }
-                file.outputStream().use { outputStream ->
-                    zipInputStream.copyTo(outputStream)
-                }
-                zipEntry = zipInputStream.nextEntry
             }
         }
-        cbzFile.delete()
     }
 }

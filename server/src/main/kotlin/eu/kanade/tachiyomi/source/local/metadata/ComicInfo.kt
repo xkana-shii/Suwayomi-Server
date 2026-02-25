@@ -1,10 +1,13 @@
 package eu.kanade.tachiyomi.source.local.metadata
 
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SChapter
 import kotlinx.serialization.Serializable
 import nl.adaptivity.xmlutil.serialization.XmlElement
 import nl.adaptivity.xmlutil.serialization.XmlSerialName
 import nl.adaptivity.xmlutil.serialization.XmlValue
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 const val COMIC_INFO_FILE = "ComicInfo.xml"
 
@@ -35,6 +38,55 @@ fun SManga.copyFromComicInfo(comicInfo: ComicInfo) {
         ?.let { artist = it }
 
     status = ComicInfoPublishingStatus.toSMangaValue(comicInfo.publishingStatus?.value)
+}
+
+/**
+ * Apply ComicInfo metadata to an SChapter.
+ *
+ * Behavior:
+ *  - If ComicInfo.Title is present, set the chapter name to it.
+ *  - If ComicInfo.Number is present, attempt to parse it as a number and set chapter_number.
+ *  - If ComicInfo.Translator or ComicInfo.Writer is present, set scanlator if not blank.
+ *  - If ComicInfo.Year (and optionally month/day) are present, set date_upload (ms since epoch UTC).
+ */
+fun SChapter.copyFromComicInfo(comicInfo: ComicInfo) {
+    // Title -> chapter name
+    comicInfo.title?.let { t ->
+        if (t.value.isNotBlank()) {
+            this.name = t.value
+        }
+    }
+
+    // Number -> chapter_number (try parsing as double)
+    comicInfo.number?.let { n ->
+        val raw = n.value.trim()
+        val num = raw.toDoubleOrNull() ?: raw.replace(',', '.').toDoubleOrNull()
+        if (num != null) {
+            this.chapter_number = num.toFloat()
+        }
+    }
+
+    // Prefer translator, otherwise writer (these are the best guesses for scanlator)
+    val scanner = comicInfo.translator?.value?.takeIf { it.isNotBlank() }
+        ?: comicInfo.writer?.value?.takeIf { it.isNotBlank() }
+    if (scanner != null) {
+        this.scanlator = scanner
+    }
+
+    // Year/month/day -> date_upload (UTC midnight for that date)
+    val y = comicInfo.year?.value ?: 0
+    if (y > 0) {
+        val m = (comicInfo.month?.value ?: 1).coerceIn(1, 12)
+        val d = (comicInfo.day?.value ?: 1).coerceIn(1, 31)
+        try {
+            val epochMillis = LocalDate.of(y, m, d).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+            if (epochMillis > 0) {
+                this.date_upload = epochMillis
+            }
+        } catch (_: Exception) {
+            // ignore invalid date combinations
+        }
+    }
 }
 
 @Serializable

@@ -8,6 +8,8 @@ import suwayomi.tachidesk.manga.impl.download.fileProvider.ChaptersFilesProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.FileType.RegularFile
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
+import suwayomi.tachidesk.manga.impl.util.getCandidateChapterDownloadPathsRelative
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.FileDeletionHelper
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.ApplicationDirs
@@ -30,7 +32,9 @@ class FolderProvider(
     chapterId: Int,
 ) : ChaptersFilesProvider<RegularFile>(mangaId, chapterId) {
     override fun getImageFiles(): List<RegularFile> {
-        val chapterFolder = File(getChapterDownloadPath(mangaId, chapterId))
+        // Prefer existing candidate folder if any, else canonical path
+        val chapterFolderPath = resolveExistingChapterDownloadFolder(mangaId, chapterId) ?: getChapterDownloadPath(mangaId, chapterId)
+        val chapterFolder = File(chapterFolderPath)
 
         if (!chapterFolder.exists()) {
             throw Exception("download folder does not exist")
@@ -50,30 +54,45 @@ class FolderProvider(
     }
 
     override suspend fun handleSuccessfulDownload() {
+        // After pages written to cache, copy/create the canonical final location (canonical = hashed path)
         val chapterDir = getChapterDownloadPath(mangaId, chapterId)
         val folder = File(chapterDir)
+        folder.mkdirs()
 
         val cacheChapterDir = getChapterCachePath(mangaId, chapterId)
         File(cacheChapterDir).copyRecursively(folder, true)
     }
 
     override fun delete(): Boolean {
-        val chapterDirPath = getChapterDownloadPath(mangaId, chapterId)
-        val chapterDir = File(chapterDirPath)
-        if (!chapterDir.exists()) {
-            return true
-        }
+        // Delete all candidate folder names and candidate .cbz files
+        val candidates = getCandidateChapterDownloadPathsRelative(mangaId, chapterId)
+        var deletedAny = false
 
-        val chapterDirDeleted = chapterDir.deleteRecursively()
-        if (chapterDirDeleted) {
-            transaction {
-                ChapterTable.update({ ChapterTable.id eq chapterId }) {
-                    it[koreaderHash] = null
+        for (rel in candidates) {
+            val chapterDir = File(applicationDirs.mangaDownloadsRoot, rel)
+            if (chapterDir.exists()) {
+                val chapterDirDeleted = chapterDir.deleteRecursively()
+                if (chapterDirDeleted) {
+                    transaction {
+                        ChapterTable.update({ ChapterTable.id eq chapterId }) {
+                            it[koreaderHash] = null
+                        }
+                    }
+                    deletedAny = true
                 }
+                FileDeletionHelper.cleanupParentFoldersFor(chapterDir, applicationDirs.mangaDownloadsRoot)
+            }
+
+            val cbzFile = File(applicationDirs.mangaDownloadsRoot, "$rel.cbz")
+            if (cbzFile.exists()) {
+                if (cbzFile.delete()) {
+                    deletedAny = true
+                }
+                FileDeletionHelper.cleanupParentFoldersFor(cbzFile, applicationDirs.mangaDownloadsRoot)
             }
         }
-        FileDeletionHelper.cleanupParentFoldersFor(chapterDir, applicationDirs.mangaDownloadsRoot)
-        return chapterDirDeleted
+
+        return deletedAny
     }
 
     override fun getAsArchiveStream(): Pair<InputStream, Long> {

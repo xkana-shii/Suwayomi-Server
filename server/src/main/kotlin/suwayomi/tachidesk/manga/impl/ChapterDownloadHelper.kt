@@ -7,6 +7,8 @@ import suwayomi.tachidesk.manga.impl.download.fileProvider.ChaptersFilesProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.impl.ArchiveProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.impl.FolderProvider
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
@@ -45,15 +47,21 @@ object ChapterDownloadHelper {
         step: suspend (DownloadQueueItem?, Boolean) -> Unit,
     ): Boolean = provider(mangaId, chapterId).download().execute(download, scope, step)
 
-    // return the appropriate provider based on how the download was saved. For the logic is simple but will evolve when new types of downloads are available
+    // return the appropriate provider based on existing saved download type.
     private fun provider(
         mangaId: Int,
         chapterId: Int,
     ): ChaptersFilesProvider<*> {
-        val chapterFolder = File(getChapterDownloadPath(mangaId, chapterId))
-        val cbzFile = File(getChapterCbzPath(mangaId, chapterId))
-        if (cbzFile.exists()) return ArchiveProvider(mangaId, chapterId)
-        if (!chapterFolder.exists() && serverConfig.downloadAsCbz.value) return ArchiveProvider(mangaId, chapterId)
+        // If a CBZ already exists among candidates, use ArchiveProvider
+        if (resolveExistingChapterCbzPath(mangaId, chapterId) != null) return ArchiveProvider(mangaId, chapterId)
+
+        // If a folder exists among candidates, use FolderProvider
+        if (resolveExistingChapterDownloadFolder(mangaId, chapterId) != null) return FolderProvider(mangaId, chapterId)
+
+        // If config prefers cbz for new downloads, write CBZ provider
+        if (serverConfig.downloadAsCbz.value) return ArchiveProvider(mangaId, chapterId)
+
+        // Default fallback: folder provider
         return FolderProvider(mangaId, chapterId)
     }
 
@@ -73,39 +81,7 @@ object ChapterDownloadHelper {
             val mangaTitle = row[MangaTable.title]
 
             val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
-            val fileName = "$mangaTitle - $scanlatorPart${chapter.name}.cbz"
-
-            Pair(chapter, fileName)
+            val fileName = "$scanlatorPart${chapter.name}"
+            chapter to fileName
         }
-
-    fun getCbzForDownload(
-        chapterId: Int,
-        markAsRead: Boolean?,
-    ): Triple<InputStream, String, Long> {
-        val (chapterData, fileName) = getChapterWithCbzFileName(chapterId)
-
-        val cbzFile = provider(chapterData.mangaId, chapterData.id).getAsArchiveStream()
-
-        if (markAsRead == true) {
-            Chapter.modifyChapter(
-                chapterData.mangaId,
-                chapterData.index,
-                isRead = true,
-                isBookmarked = null,
-                isFillermarked = null,
-                markPrevRead = null,
-                lastPageRead = null,
-            )
-        }
-
-        return Triple(cbzFile.first, fileName, cbzFile.second)
-    }
-
-    fun getCbzMetadataForDownload(chapterId: Int): Pair<String, Long> { // fileName, fileSize
-        val (chapterData, fileName) = getChapterWithCbzFileName(chapterId)
-
-        val fileSize = provider(chapterData.mangaId, chapterData.id).getArchiveSize()
-
-        return Pair(fileName, fileSize)
-    }
 }

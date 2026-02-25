@@ -23,6 +23,8 @@ import suwayomi.tachidesk.manga.impl.util.createComicInfoFile
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
@@ -133,7 +135,8 @@ abstract class ChaptersFilesProvider<Type : FileType>(
 
         extractExistingDownload()
 
-        val finalDownloadFolder = getChapterDownloadPath(mangaId, chapterId)
+        // Prefer any previously existing candidate folder; otherwise use canonical generated path
+        val finalDownloadFolder = resolveExistingChapterDownloadFolder(mangaId, chapterId) ?: getChapterDownloadPath(mangaId, chapterId)
 
         val cacheChapterDir = getChapterCachePath(mangaId, chapterId)
         val downloadCacheFolder = File(cacheChapterDir)
@@ -181,6 +184,7 @@ abstract class ChaptersFilesProvider<Type : FileType>(
             step(download, false)
         }
 
+        // Create ComicInfo.xml in cache folder (the util will encode using XML serializer)
         createComicInfoFile(
             downloadCacheFolder.toPath(),
             transaction {
@@ -193,8 +197,8 @@ abstract class ChaptersFilesProvider<Type : FileType>(
 
         handleSuccessfulDownload()
 
-        // Calculate and save Koreader hash for CBZ files
-        val chapterFile = File(getChapterCbzPath(mangaId, chapterId))
+        // Calculate and save Koreader hash for CBZ files (try existing cbz candidate first)
+        val chapterFile = File(resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId))
         if (chapterFile.exists()) {
             val koreaderHash = KoreaderHelper.hashContents(chapterFile)
             if (koreaderHash != null) {
