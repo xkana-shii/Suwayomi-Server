@@ -1,8 +1,8 @@
-package eu.kanade.tachiyomi.data.track.mangabaka.dto
+package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto
 
-import eu.kanade.tachiyomi.data.track.mangabaka.MangaBaka
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.MangaBaka
 
 @Serializable
 data class MangaBakaListResult(
@@ -24,7 +24,7 @@ data class MangaBakaListEntry(
     @SerialName("number_of_rereads")
     val numberOfRereads: Int? = null,
 ) {
-    fun getStatus(): Long = when (state) {
+    fun getStatus(): Int = when (state) {
         "considering" -> MangaBaka.CONSIDERING
         "completed" -> MangaBaka.COMPLETED
         "dropped" -> MangaBaka.DROPPED

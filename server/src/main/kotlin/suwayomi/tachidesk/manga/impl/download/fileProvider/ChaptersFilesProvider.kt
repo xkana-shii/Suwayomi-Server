@@ -5,10 +5,15 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import libcore.net.MimeUtils
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.jetbrains.exposed.sql.selectAll
@@ -32,6 +37,8 @@ import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.util.ConversionUtil
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
@@ -142,46 +149,79 @@ abstract class ChaptersFilesProvider<Type : FileType>(
         val downloadCacheFolder = File(cacheChapterDir)
         downloadCacheFolder.mkdirs()
 
-        for (pageNum in 0 until pageCount) {
-            var pageProgressJob: Job? = null
-            val fileName = Page.getPageName(pageNum, pageCount) // might have to change this to index stored in database
+        // Concurrent page-download implementation using a Semaphore to limit concurrency.
+        val pageConcurrency = serverConfig.maxPagesInParallel.value.coerceAtLeast(1)
+        val semaphore = Semaphore(pageConcurrency)
 
-            val pageExistsInFinalDownloadFolder = ImageResponse.findFileNameStartingWith(finalDownloadFolder, fileName) != null
-            val pageExistsInCacheDownloadFolder = ImageResponse.findFileNameStartingWith(cacheChapterDir, fileName) != null
-
-            val doesPageAlreadyExist = pageExistsInFinalDownloadFolder || pageExistsInCacheDownloadFolder
-            if (doesPageAlreadyExist) {
-                continue
+        // Map to hold per-page percent (0..100). Uses ConcurrentHashMap for thread-safe updates.
+        val pageProgressMap = ConcurrentHashMap<Int, Int>().apply {
+            // initialize all pages to 0%
+            for (i in 0 until pageCount) {
+                this[i] = 0
             }
+        }
+        val completedPages = AtomicInteger(0)
 
-            try {
-                Page
-                    .getPageImageDownload(
-                        mangaId = download.mangaId,
-                        chapterId = download.chapterId,
-                        index = pageNum,
-                        downloadCacheFolder,
-                        fileName,
-                    ) { flow ->
-                        pageProgressJob =
-                            flow
-                                .sample(100)
-                                .distinctUntilChanged()
-                                .onEach {
-                                    download.progress = (pageNum.toFloat() + (it.toFloat() * 0.01f)) / pageCount
-                                    step(
-                                        null,
-                                        false,
-                                    ) // don't throw on canceled download here since we can't do anything
-                                }.launchIn(scope)
+        // Use coroutineScope so failures/cancellation propagate and we can await all page jobs.
+        coroutineScope {
+            val jobs = (0 until pageCount).map { pageNum ->
+                async {
+                    val fileName = Page.getPageName(pageNum, pageCount) // might have to change this to index stored in database
+
+                    val pageExistsInFinalDownloadFolder = ImageResponse.findFileNameStartingWith(finalDownloadFolder, fileName) != null
+                    val pageExistsInCacheDownloadFolder = ImageResponse.findFileNameStartingWith(cacheChapterDir, fileName) != null
+
+                    val doesPageAlreadyExist = pageExistsInFinalDownloadFolder || pageExistsInCacheDownloadFolder
+                    if (doesPageAlreadyExist) {
+                        // Mark page as complete for progress aggregation
+                        pageProgressMap[pageNum] = 100
+                        completedPages.incrementAndGet()
+                        // update aggregated progress and notify
+                        download.progress = completedPages.get().toFloat() / pageCount
+                        step(download, false)
+                        return@async
                     }
-            } finally {
-                // always cancel the page progress job even if it throws an exception to avoid memory leaks
-                pageProgressJob?.cancel()
+
+                    // Limit concurrent page downloads via semaphore
+                    semaphore.withPermit {
+                        var pageProgressJob: Job? = null
+                        try {
+                            Page.getPageImageDownload(
+                                mangaId = download.mangaId,
+                                chapterId = download.chapterId,
+                                index = pageNum,
+                                downloadCacheFolder,
+                                fileName,
+                            ) { flow ->
+                                pageProgressJob =
+                                    flow
+                                        .sample(100)
+                                        .distinctUntilChanged()
+                                        .onEach { progressValue ->
+                                            // Update this page's percent and compute aggregated progress.
+                                            pageProgressMap[pageNum] = progressValue
+                                            val totalPercent = pageProgressMap.values.sum()
+                                            val overallProgress = totalPercent.toFloat() / (pageCount * 100)
+                                            download.progress = overallProgress
+                                            // Notify progress (non-throwing)
+                                            step(null, false)
+                                        }.launchIn(scope)
+                            }
+
+                            // Mark page as finished (100%) after successful download
+                            pageProgressMap[pageNum] = 100
+                            completedPages.incrementAndGet()
+                            download.progress = completedPages.get().toFloat() / pageCount
+                            step(download, false)
+                        } finally {
+                            // always cancel the page progress job even if it throws an exception to avoid memory leaks
+                            pageProgressJob?.cancel()
+                        }
+                    }
+                }
             }
-            // TODO: retry on error with 2,4,8 seconds of wait
-            download.progress = ((pageNum + 1).toFloat()) / pageCount
-            step(download, false)
+            // Wait for all pages to finish. Exceptions will propagate and cancel siblings.
+            jobs.awaitAll()
         }
 
         // Create ComicInfo.xml in cache folder (the util will encode using XML serializer)

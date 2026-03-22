@@ -90,7 +90,6 @@ object ChapterDownloadHelper {
         chapterId: Int,
         markAsRead: Boolean?,
     ): Triple<InputStream, String, Long> {
-        // Build chapter info and filename including manga title and .cbz extension
         val (chapterData, baseName) = transaction {
             val row =
                 (ChapterTable innerJoin MangaTable)
@@ -138,5 +137,53 @@ object ChapterDownloadHelper {
         val fileSize = provider(chapterData.mangaId, chapterData.id).getArchiveSize()
 
         return Pair(fileName, fileSize)
+    }
+
+    /**
+     * Try to migrate/rename an existing downloaded chapter (either a folder or a cbz candidate)
+     * to the canonical current naming scheme.
+     *
+     * Returns true if a migration/rename happened (or the desired file already exists).
+     *
+     * Note: This helper performs a filesystem rename. It does not recompute or inject ComicInfo
+     * inside an existing CBZ. If you require updating the CBZ contents (e.g. to add/update ComicInfo.xml),
+     * extract -> createComicInfoFile(...) -> re-create the CBZ will be necessary.
+     */
+    fun migrateDownloadedChapterFilename(chapterId: Int): Boolean {
+        // Fetch chapter + manga id
+        val chapterRow = transaction {
+            ChapterTable.select(ChapterTable.columns).where { ChapterTable.id eq chapterId }.firstOrNull()
+        } ?: return false
+
+        val mangaId = chapterRow[ChapterTable.manga].value
+
+        val existingCbzPath = resolveExistingChapterCbzPath(mangaId, chapterId)
+        val existingFolderPath = resolveExistingChapterDownloadFolder(mangaId, chapterId)
+
+        val desiredCbzPath = getChapterCbzPath(mangaId, chapterId)
+        val desiredFolderPath = getChapterDownloadPath(mangaId, chapterId)
+
+        // If a CBZ candidate exists, prefer migrating that.
+        if (!existingCbzPath.isNullOrBlank()) {
+            val existingFile = File(existingCbzPath)
+            val desiredFile = File(desiredCbzPath)
+            if (!existingFile.exists()) return false
+            if (existingFile.absolutePath == desiredFile.absolutePath) return true
+            desiredFile.parentFile?.mkdirs()
+            return existingFile.renameTo(desiredFile)
+        }
+
+        // Otherwise if a folder candidate exists, migrate it.
+        if (!existingFolderPath.isNullOrBlank()) {
+            val existingDir = File(existingFolderPath)
+            val desiredDir = File(desiredFolderPath)
+            if (!existingDir.exists()) return false
+            if (existingDir.absolutePath == desiredDir.absolutePath) return true
+            desiredDir.parentFile?.mkdirs()
+            return existingDir.renameTo(desiredDir)
+        }
+
+        // Nothing found to migrate
+        return false
     }
 }

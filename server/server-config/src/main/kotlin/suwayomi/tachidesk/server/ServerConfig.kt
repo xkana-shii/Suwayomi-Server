@@ -1017,6 +1017,15 @@ class ServerConfig(
     )
 
 
+    val maxPagesInParallel: MutableStateFlow<Int> by IntSetting(
+        protoNumber = 86,
+        group = SettingGroup.DOWNLOADER,
+        privacySafe = true,
+        defaultValue = 10,
+        min = 10,
+        max = 20,
+        description = "How many page downloads (within a single chapter) can run in parallel.",
+    )
 
     /** ****************************************************************** **/
     /**                                                                    **/

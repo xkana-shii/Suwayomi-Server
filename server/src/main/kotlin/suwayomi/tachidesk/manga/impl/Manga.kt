@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KLogger
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.http.HttpStatus
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
 import okhttp3.Response
 import org.jetbrains.exposed.dao.id.EntityID
@@ -37,10 +39,11 @@ import suwayomi.tachidesk.manga.impl.util.network.await
 import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrNull
 import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
 import suwayomi.tachidesk.manga.impl.util.source.StubSource
+import suwayomi.tachidesk.manga.impl.util.updateMangaDownloadDir
+import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse.clearCachedImage
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse.getImageResponse
 import suwayomi.tachidesk.manga.impl.util.storage.ImageUtil
-import suwayomi.tachidesk.manga.impl.util.updateMangaDownloadDir
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
 import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
@@ -170,6 +173,21 @@ object Manga {
                 it[MangaTable.lastFetchedAt] = Instant.now().epochSecond
 
                 it[MangaTable.updateStrategy] = sManga.update_strategy.name
+            }
+        }
+
+        // Try to migrate previously-downloaded chapter filenames for this manga.
+        // Run on IO dispatcher because this performs filesystem operations.
+        withContext(Dispatchers.IO) {
+            val chapterIds = transaction {
+                ChapterTable.selectAll().where { ChapterTable.manga eq mangaId }.map { it[ChapterTable.id].value }
+            }
+            chapterIds.forEach { chapterId ->
+                try {
+                    ChapterDownloadHelper.migrateDownloadedChapterFilename(chapterId)
+                } catch (e: Throwable) {
+                    logger.warn(e) { "failed migrating downloaded chapter filename for chapterId=$chapterId" }
+                }
             }
         }
 

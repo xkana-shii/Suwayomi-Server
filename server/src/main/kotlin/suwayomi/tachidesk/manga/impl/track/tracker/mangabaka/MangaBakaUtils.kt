@@ -1,6 +1,6 @@
-package eu.kanade.tachiyomi.data.track.mangabaka
+package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
-import eu.kanade.tachiyomi.data.database.models.Track
+import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 
 fun Track.toApiStatus() = when (status) {
     MangaBaka.CONSIDERING -> "considering"

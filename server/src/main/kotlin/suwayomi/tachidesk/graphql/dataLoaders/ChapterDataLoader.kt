@@ -160,20 +160,25 @@ class HasDuplicateChaptersForMangaDataLoader : KotlinDataLoader<Int, Boolean> {
             future {
                 transaction {
                     addLogger(Slf4jSqlDebugLogger)
-                    val duplicatedChapterCountByMangaId =
-                        ChapterTable
-                            .select(ChapterTable.manga, ChapterTable.chapter_number, ChapterTable.chapter_number.count())
-                            .where {
-                                (
-                                    ChapterTable.manga inList
-                                        ids
-                                ) and
-                                    (ChapterTable.chapter_number greaterEq 0f)
-                            }.groupBy(ChapterTable.manga, ChapterTable.chapter_number)
-                            .having { ChapterTable.chapter_number.count() greater 1 }
-                            .associate { it[ChapterTable.manga].value to it[ChapterTable.chapter_number.count()] }
+                    // Merge counts into duplicatedChapterCountByMangaId:
+                    // duplicatedChapterCountByMangaId: Map<mangaId, Map<normalizedName, count>>
+                    val duplicatedChapterCountByMangaId = mutableMapOf<Int, MutableMap<String, Int>>()
 
-                    ids.map { duplicatedChapterCountByMangaId.contains(it) }
+                    ChapterTable
+                        .selectAll()
+                        .where { ChapterTable.manga inList ids }
+                        .forEach { row ->
+                            val mangaId = row[ChapterTable.manga].value
+                            val rawName = row[ChapterTable.name] ?: ""
+                            val normalizedName = rawName.lowercase().trim()
+                            val inner = duplicatedChapterCountByMangaId.getOrPut(mangaId) { mutableMapOf() }
+                            inner[normalizedName] = (inner[normalizedName] ?: 0) + 1
+                        }
+
+                    // For compatibility with previous boolean result, return true if any normalized name count > 1
+                    ids.map { id ->
+                        duplicatedChapterCountByMangaId[id]?.any { it.value > 1 } ?: false
+                    }
                 }
             }
         }

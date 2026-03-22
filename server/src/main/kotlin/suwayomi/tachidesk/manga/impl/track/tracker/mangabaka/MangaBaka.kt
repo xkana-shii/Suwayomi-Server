@@ -1,21 +1,25 @@
-package eu.kanade.tachiyomi.data.track.mangabaka
+package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
 import dev.icerock.moko.resources.StringResource
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.database.models.Track
-import eu.kanade.tachiyomi.data.track.BaseTracker
-import eu.kanade.tachiyomi.data.track.DeletableTracker
-import eu.kanade.tachiyomi.data.track.mangabaka.dto.MangaBakaOAuth
-import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
-import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.toImmutableList
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.json.Json
-import tachiyomi.i18n.MR
+import org.jetbrains.kotlin.kotlinx.collections.immutable.ImmutableList
+import org.jetbrains.kotlin.kotlinx.collections.immutable.toImmutableList
+import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
+import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
+import suwayomi.tachidesk.manga.impl.track.tracker.bangumi.dto.BGMOAuth
+import suwayomi.tachidesk.manga.impl.track.tracker.extractToken
+import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
+import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
+import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
-import tachiyomi.domain.track.model.Track as DomainTrack
+import java.io.IOException
+import kotlin.compareTo
+import kotlin.text.get
+import kotlin.text.set
+import kotlin.text.toLong
 
-class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
+class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
     private val json: Json by injectLazy()
 
@@ -25,33 +29,31 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
     override val supportsReadingDates: Boolean = true
     override val supportsPrivateTracking: Boolean = true
 
-    private val scorePreference = trackPreferences.mangabakaScoreType()
+    override fun getLogo(): String = "/static/tracker/mangabaka.png"
 
-    override fun getLogo(): Int = R.drawable.ic_tracker_mangabaka
-
-    override fun getStatusList(): List<Long> {
+    override fun getStatusList(): List<Int> {
         return listOf(READING, COMPLETED, PAUSED, DROPPED, PLAN_TO_READ, REREADING, CONSIDERING)
     }
 
-    override fun getStatus(status: Long): StringResource? = when (status) {
-        CONSIDERING -> MR.strings.considering
-        COMPLETED -> MR.strings.completed
-        DROPPED -> MR.strings.dropped
-        PAUSED -> MR.strings.paused
-        PLAN_TO_READ -> MR.strings.plan_to_read
-        READING -> MR.strings.reading
-        REREADING -> MR.strings.repeating
+    override fun getStatus(status: Int): String? = when (status) {
+        CONSIDERING -> "Considering"
+        COMPLETED -> "Completed"
+        DROPPED -> "Dropped"
+        PAUSED -> "Paused"
+        PLAN_TO_READ -> "Plan to read"
+        READING -> "Reading"
+        REREADING -> "Rereading"
         else -> null
     }
 
-    override fun getReadingStatus(): Long = READING
+    override fun getReadingStatus(): Int = READING
 
-    override fun getRereadingStatus(): Long = REREADING
+    override fun getRereadingStatus(): Int = REREADING
 
-    override fun getCompletionStatus(): Long = COMPLETED
+    override fun getCompletionStatus(): Int = COMPLETED
 
     override fun getScoreList(): ImmutableList<String> {
-        return when (scorePreference.get()) {
+        return when (trackPreferences.getScoreType(this)) {
             // 1, 2, ..., 99, 100
             STEP_1 -> IntRange(0, 100).map(Int::toString).toImmutableList()
             // 5, 10, ..., 95, 100
@@ -66,7 +68,7 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
         }
     }
 
-    override fun displayScore(track: DomainTrack): String = track.score.toInt().toString()
+    override fun displayScore(track: Track): String = track.score.toInt().toString()
 
     override suspend fun update(
         track: Track,
@@ -152,19 +154,19 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
                 25 -> STEP_25
                 else -> throw Exception("Unknown score step size $scoreStep")
             }
-            scorePreference.set(scoreType)
+            trackPreferences.setScoreType(this, scoreType)
         } catch (_: Exception) {
             logout()
         }
     }
 
     fun saveToken(oauth: MangaBakaOAuth?) {
-        trackPreferences.trackToken(this).set(json.encodeToString(oauth))
+        trackPreferences.setTrackToken(this, json.encodeToString(oauth))
     }
 
     fun restoreToken(): MangaBakaOAuth? {
         return try {
-            json.decodeFromString(trackPreferences.trackToken(this).get())
+            json.decodeFromString<MangaBakaOAuth>(trackPreferences.getTrackToken(this)!!)
         } catch (_: Exception) {
             null
         }
@@ -172,7 +174,7 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
 
     override fun logout() {
         super.logout()
-        trackPreferences.trackToken(this).delete()
+        trackPreferences.setTrackToken(this, null)
         interceptor.setAuth(null)
     }
 
@@ -180,7 +182,7 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
         return api.getMangaMetadata(track)
     } */
 
-    override suspend fun delete(track: DomainTrack) {
+    override suspend fun delete(track: Track) {
         api.deleteLibManga(track)
     }
 
@@ -199,6 +201,4 @@ class MangaBaka(id: Long) : BaseTracker(id, "MangaBaka"), DeletableTracker {
         const val STEP_20 = "STEP_20"
         const val STEP_25 = "STEP_25"
     }
-
-    override fun hasNotStartedReading(status: Long): Boolean = status == PLAN_TO_READ || status == CONSIDERING
 }
