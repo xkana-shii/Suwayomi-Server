@@ -19,6 +19,7 @@ import okhttp3.Headers.Companion.headersOf
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
+import suwayomi.tachidesk.manga.impl.track.Track.htmlDecode
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.*
 import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
@@ -292,7 +293,7 @@ class MangaBakaApi(
                         TrackSearch.create(trackId).apply {
                             remote_id = it.mergedWith ?: it.id
                             title = it.title
-                            summary = Jsoup.parse(it.description.orEmpty()).text().trim()
+                            summary = it.description.orEmpty().htmlDecode().trim()
                             total_chapters = it.totalChapters?.toIntOrNull() ?: 0
                             score = it.rating?.toBigDecimal()?.setScale(2, RoundingMode.HALF_UP)?.toDouble() ?: -1.0
                             cover_url = it.cover.x350.x3.orEmpty()
