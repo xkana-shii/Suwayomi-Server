@@ -1,23 +1,14 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
-import dev.icerock.moko.resources.StringResource
-import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.json.Json
 import org.jetbrains.kotlin.kotlinx.collections.immutable.ImmutableList
 import org.jetbrains.kotlin.kotlinx.collections.immutable.toImmutableList
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
-import suwayomi.tachidesk.manga.impl.track.tracker.bangumi.dto.BGMOAuth
-import suwayomi.tachidesk.manga.impl.track.tracker.extractToken
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
 import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
-import java.io.IOException
-import kotlin.compareTo
-import kotlin.text.get
-import kotlin.text.set
-import kotlin.text.toLong
 
 class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
@@ -83,7 +74,7 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
         if (track.status != COMPLETED && didReadChapter) {
             if (
                 track.total_chapters > 0 &&
-                track.last_chapter_read.toLong() == track.total_chapters &&
+                track.last_chapter_read.toInt() == track.total_chapters &&
                 mangaItem.status == "completed"
             ) {
                 track.status = COMPLETED
@@ -187,13 +178,13 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
     }
 
     companion object {
-        const val READING = 1L
-        const val COMPLETED = 2L
-        const val PAUSED = 3L
-        const val DROPPED = 4L
-        const val PLAN_TO_READ = 5L
-        const val REREADING = 6L
-        const val CONSIDERING = 7L
+        const val READING = 1
+        const val COMPLETED = 2
+        const val PAUSED = 3
+        const val DROPPED = 4
+        const val PLAN_TO_READ = 5
+        const val REREADING = 6
+        const val CONSIDERING = 7
 
         const val STEP_1 = "STEP_1"
         const val STEP_5 = "STEP_5"

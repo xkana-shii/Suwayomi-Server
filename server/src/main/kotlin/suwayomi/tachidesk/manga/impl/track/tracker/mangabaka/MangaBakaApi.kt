@@ -12,13 +12,13 @@ import eu.kanade.tachiyomi.util.lang.withIOContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import android.text.Html
 import androidx.core.net.toUri
 import eu.kanade.tachiyomi.network.HttpException
 import okhttp3.FormBody
 import okhttp3.Headers.Companion.headersOf
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.jsoup.Jsoup
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.*
 import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
@@ -30,7 +30,6 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlin.text.orEmpty
 import kotlin.text.toInt
-import kotlin.toString
 
 class MangaBakaApi(
     private val trackId: Int,
@@ -109,7 +108,7 @@ class MangaBakaApi(
 
     suspend fun deleteLibManga(track: Track) {
         withIOContext {
-            val resolvedId = resolveId(track.remoteId)
+            val resolvedId = resolveId(track.remote_id)
             val url = "${LIBRARY_API_URL}/$resolvedId"
 
             authClient
@@ -293,7 +292,7 @@ class MangaBakaApi(
                         TrackSearch.create(trackId).apply {
                             remote_id = it.mergedWith ?: it.id
                             title = it.title
-                            summary = Html.fromHtml(it.description.orEmpty(), Html.fromHtml()).toString().trim()
+                            summary = Jsoup.parse(it.description.orEmpty()).text().trim()
                             total_chapters = it.totalChapters?.toIntOrNull() ?: 0
                             score = it.rating?.toBigDecimal()?.setScale(2, RoundingMode.HALF_UP)?.toDouble() ?: -1.0
                             cover_url = it.cover.x350.x3.orEmpty()
