@@ -3,10 +3,12 @@ package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 import kotlinx.serialization.json.Json
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
+import suwayomi.tachidesk.manga.impl.track.tracker.extractToken
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
 import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
+import java.io.IOException
 
 class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
@@ -126,6 +128,13 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
             track.total_chapters = remoteTrack.total_chapters
         }
         return track
+    }
+
+    override fun authUrl(): String = MangaBakaApi.authUrl().toString()
+
+    override suspend fun authCallback(url: String) {
+        val code = url.extractToken("code") ?: throw IOException("cannot find token")
+        login(code)
     }
 
     override suspend fun login(username: String, password: String) = login(password)
