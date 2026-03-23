@@ -25,10 +25,10 @@ jobs:
     needs: check_wrapper
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout master branch
+      - name: Checkout triggering branch or tag
         uses: actions/checkout@v6
         with:
-          ref: master
+          ref: ${{ github.ref }}
           path: master
           fetch-depth: 0
 
