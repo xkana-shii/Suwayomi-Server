@@ -19,7 +19,7 @@ object TrackerManager {
     const val KAVITA = 8
     const val SUWAYOMI = 9
 
-    const val MANGABAKA = 10
+    const val MANGABAKA = 11
 
 
     val myAnimeList = MyAnimeList(MYANIMELIST)
