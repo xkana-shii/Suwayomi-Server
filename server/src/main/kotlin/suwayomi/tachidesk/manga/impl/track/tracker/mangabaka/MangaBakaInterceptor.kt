@@ -1,7 +1,5 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
-import eu.kanade.tachiyomi.data.track.mangabaka.MangaBaka
-import eu.kanade.tachiyomi.data.track.mangabaka.MangaBakaApi
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
 import okhttp3.Response

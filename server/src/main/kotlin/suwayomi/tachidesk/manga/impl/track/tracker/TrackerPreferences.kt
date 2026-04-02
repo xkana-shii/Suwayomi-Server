@@ -65,6 +65,8 @@ object TrackerPreferences {
 
     fun getScoreType(sync: Tracker) = preferenceStore.getString(scoreType(sync.id), Anilist.POINT_10)
 
+    // val mangabakaScoreType: Preference<String> = preferenceStore.getString("mangabaka_score_type", MangaBaka.STEP_1)
+
     fun setScoreType(
         sync: Tracker,
         scoreType: String,
