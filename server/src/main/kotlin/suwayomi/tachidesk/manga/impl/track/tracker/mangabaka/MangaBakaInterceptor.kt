@@ -1,12 +1,12 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
+import eu.kanade.tachiyomi.data.track.mangabaka.MangaBaka
+import eu.kanade.tachiyomi.data.track.mangabaka.MangaBakaApi
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
 import okhttp3.Response
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
-import suwayomi.tachidesk.server.generated.BuildConfig
 import uy.kohesive.injekt.injectLazy
-import kotlin.getValue
 
 class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
 
@@ -30,7 +30,6 @@ class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
         }
 
         return originalRequest.newBuilder()
-            .header("User-Agent", "Suwayomi/Suwayomi-Server/${BuildConfig.VERSION} (${BuildConfig.GITHUB})")
             .addHeader("Authorization", "Bearer ${currentAuth.accessToken}")
             .build()
             .let(chain::proceed)
