@@ -1,8 +1,6 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
 import kotlinx.serialization.json.Json
-import org.jetbrains.kotlin.kotlinx.collections.immutable.ImmutableList
-import org.jetbrains.kotlin.kotlinx.collections.immutable.toImmutableList
 import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
@@ -45,18 +43,18 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
     override fun getCompletionStatus(): Int = COMPLETED
 
-    override fun getScoreList(): ImmutableList<String> {
+    override fun getScoreList(): List<String> {
         return when (trackPreferences.getScoreType(this)) {
             // 1, 2, ..., 99, 100
-            STEP_1 -> IntRange(0, 100).map(Int::toString).toImmutableList()
+            STEP_1 -> IntRange(0, 100).map(Int::toString)
             // 5, 10, ..., 95, 100
-            STEP_5 -> IntRange(0, 100).step(5).map(Int::toString).toImmutableList()
+            STEP_5 -> IntRange(0, 100).step(5).map(Int::toString)
             // 10, 20, ..., 90, 100
-            STEP_10 -> IntRange(0, 100).step(10).map(Int::toString).toImmutableList()
+            STEP_10 -> IntRange(0, 100).step(10).map(Int::toString)
             // 20, 40, ..., 80, 100
-            STEP_20 -> IntRange(0, 100).step(20).map(Int::toString).toImmutableList()
+            STEP_20 -> IntRange(0, 100).step(20).map(Int::toString)
             // 25, 50, 75, 100
-            STEP_25 -> IntRange(0, 100).step(25).map(Int::toString).toImmutableList()
+            STEP_25 -> IntRange(0, 100).step(25).map(Int::toString)
             else -> throw Exception("Unknown score type")
         }
     }
