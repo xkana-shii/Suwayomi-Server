@@ -8,8 +8,6 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
-import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlin.system.measureTimeMillis
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
@@ -45,8 +43,6 @@ import kotlin.time.Duration.Companion.seconds
 import suwayomi.tachidesk.manga.impl.track.Track as Tracker
 
 object BackupMangaHandler {
-    private val logger = KotlinLogging.logger { }
-
     private enum class RestoreMode {
         NEW,
         EXISTING,
@@ -76,106 +72,75 @@ object BackupMangaHandler {
         )
 
         // Stage 1: Bulk fetch everything we need inside a short transaction and convert to in-memory maps
-        logger.info { "backup: starting bulk prefetch (flags=$flags)" }
-        val t0 = System.currentTimeMillis()
         val prefetched = dbTransaction {
             // 1) fetch manga rows
-            val mangaRows: List<ResultRow>
-            val mangaFetchMs = measureTimeMillis {
-                mangaRows = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
-            }
-
+            val mangaRows = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
             val mangaIds = mangaRows.map { it[MangaTable.id].value }
 
             // 2) manga metas
-            val mangaMetaByMangaId: Map<Int, Map<String, String>>
-            val mangaMetaFetchMs = measureTimeMillis {
-                mangaMetaByMangaId =
-                    if (flags.includeClientData && mangaIds.isNotEmpty()) {
-                        MangaMetaTable
-                            .selectAll()
-                            .where { MangaMetaTable.ref inList mangaIds }
-                            .groupBy { it[MangaMetaTable.ref].value }
-                            .mapValues { (_, rows) -> rows.associate { it[MangaMetaTable.key] to it[MangaMetaTable.value] } }
-                            .withDefault { emptyMap() }
-                    } else {
-                        emptyMap()
-                    }
-            }
+            val mangaMetaByMangaId =
+                if (flags.includeClientData && mangaIds.isNotEmpty()) {
+                    MangaMetaTable
+                        .selectAll()
+                        .where { MangaMetaTable.ref inList mangaIds }
+                        .groupBy { it[MangaMetaTable.ref].value }
+                        .mapValues { (_, rows) -> rows.associate { it[MangaMetaTable.key] to it[MangaMetaTable.value] } }
+                        .withDefault { emptyMap() }
+                } else {
+                    emptyMap()
+                }
 
             // 3) chapters for all manga
-            val chaptersList: List<suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass>
-            val chaptersFetchMs = measureTimeMillis {
-                chaptersList =
-                    if ((flags.includeChapters || flags.includeHistory) && mangaIds.isNotEmpty()) {
-                        ChapterTable
-                            .selectAll()
-                            .where { ChapterTable.manga inList mangaIds }
-                            .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
-                            .map { ChapterTable.toDataClass(it) }
-                    } else {
-                        emptyList()
-                    }
-            }
+            val chaptersList =
+                if ((flags.includeChapters || flags.includeHistory) && mangaIds.isNotEmpty()) {
+                    ChapterTable
+                        .selectAll()
+                        .where { ChapterTable.manga inList mangaIds }
+                        .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
+                        .map { ChapterTable.toDataClass(it) }
+                } else {
+                    emptyList()
+                }
             val chaptersByMangaId = if (chaptersList.isNotEmpty()) chaptersList.groupBy { it.mangaId } else emptyMap()
 
             // 4) chapter metas
-            val chapterMetaByChapterId: Map<Int, Map<String, String>>
-            val chapterMetaFetchMs = measureTimeMillis {
-                chapterMetaByChapterId =
-                    if (flags.includeClientData && chaptersList.isNotEmpty()) {
-                        val chapterIds = chaptersList.map { it.id }
-                        ChapterMetaTable
-                            .selectAll()
-                            .where { ChapterMetaTable.ref inList chapterIds }
-                            .groupBy { it[ChapterMetaTable.ref].value }
-                            .mapValues { (_, rows) -> rows.associate { it[ChapterMetaTable.key] to it[ChapterMetaTable.value] } }
-                            .withDefault { emptyMap() }
-                    } else {
-                        emptyMap()
-                    }
-            }
+            val chapterMetaByChapterId =
+                if (flags.includeClientData && chaptersList.isNotEmpty()) {
+                    val chapterIds = chaptersList.map { it.id }
+                    ChapterMetaTable
+                        .selectAll()
+                        .where { ChapterMetaTable.ref inList chapterIds }
+                        .groupBy { it[ChapterMetaTable.ref].value }
+                        .mapValues { (_, rows) -> rows.associate { it[ChapterMetaTable.key] to it[ChapterMetaTable.value] } }
+                        .withDefault { emptyMap() }
+                } else {
+                    emptyMap()
+                }
 
             // 5) categories for all manga (collect category.order)
-            val categoriesByMangaId: Map<Int, List<Int>>
-            val categoriesFetchMs = measureTimeMillis {
-                categoriesByMangaId =
-                    if (flags.includeCategories && mangaIds.isNotEmpty()) {
-                        CategoryMangaTable
-                            .innerJoin(CategoryTable)
-                            .selectAll()
-                            .where { CategoryMangaTable.manga inList mangaIds }
-                            .orderBy(CategoryTable.order to SortOrder.ASC)
-                            .groupBy({ it[CategoryMangaTable.manga].value }, { CategoryTable.toDataClass(it).order })
-                    } else {
-                        emptyMap()
-                    }
-            }
+            val categoriesByMangaId =
+                if (flags.includeCategories && mangaIds.isNotEmpty()) {
+                    CategoryMangaTable
+                        .innerJoin(CategoryTable)
+                        .selectAll()
+                        .where { CategoryMangaTable.manga inList mangaIds }
+                        .orderBy(CategoryTable.order to SortOrder.ASC)
+                        .groupBy({ it[CategoryMangaTable.manga].value }, { CategoryTable.toDataClass(it).order })
+                } else {
+                    emptyMap()
+                }
 
             // 6) tracks for all manga
-            val tracksByMangaId: Map<Int, List<TrackRecordDataClass>>
-            val tracksFetchMs = measureTimeMillis {
-                tracksByMangaId =
-                    if (flags.includeTracking && mangaIds.isNotEmpty()) {
-                        TrackRecordTable
-                            .selectAll()
-                            .where { TrackRecordTable.mangaId inList mangaIds }
-                            .map { it.toTrackRecordDataClass() }
-                            .groupBy { it.mangaId }
-                    } else {
-                        emptyMap()
-                    }
-            }
-
-            logger.info {
-                "backup: prefetch breakdown — " +
-                    "manga=${mangaFetchMs}ms(${mangaRows.size}), " +
-                    "mangaMeta=${mangaMetaFetchMs}ms, " +
-                    "chapters=${chaptersFetchMs}ms(${chaptersList.size}), " +
-                    "chapterMeta=${chapterMetaFetchMs}ms, " +
-                    "categories=${categoriesFetchMs}ms, " +
-                    "tracks=${tracksFetchMs}ms"
-            }
+            val tracksByMangaId =
+                if (flags.includeTracking && mangaIds.isNotEmpty()) {
+                    TrackRecordTable
+                        .selectAll()
+                        .where { TrackRecordTable.mangaId inList mangaIds }
+                        .map { it.toTrackRecordDataClass() }
+                        .groupBy { it.mangaId }
+                } else {
+                    emptyMap()
+                }
 
             Prefetched(
                 mangaRows = mangaRows,
@@ -186,10 +151,8 @@ object BackupMangaHandler {
                 tracksByMangaId = tracksByMangaId,
             )
         } // transaction ends here; connection returned to pool
-        logger.info { "backup: prefetch done in ${System.currentTimeMillis() - t0}ms (${prefetched.mangaRows.size} manga)" }
 
         // Stage 2: assemble BackupManga objects in-memory, reporting per-manga progress via callback
-        val t1 = System.currentTimeMillis()
         val total = prefetched.mangaRows.size
         return prefetched.mangaRows.mapIndexed { index, mangaRow ->
             val backupManga =
@@ -286,7 +249,7 @@ object BackupMangaHandler {
             progress?.invoke(index + 1, total, backupManga.title)
 
             backupManga
-        }.also { logger.info { "backup: assembly done in ${System.currentTimeMillis() - t1}ms" } }
+        }
     }
 
     // The rest of the original restore-related functions remain unchanged (restore logic is below)...
