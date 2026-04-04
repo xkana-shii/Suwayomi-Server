@@ -10,17 +10,11 @@ package suwayomi.tachidesk.manga.impl.backup.proto
 import android.app.Application
 import android.content.Context
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import okio.Buffer
 import okio.Sink
 import okio.buffer
@@ -42,85 +36,15 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
-import java.util.Date
-import java.util.Timer
-import java.util.TimerTask
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.days
 
 object ProtoBackupExport : ProtoBackupBase() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     private val logger = KotlinLogging.logger { }
     private val applicationDirs: ApplicationDirs by injectLazy()
     private var backupSchedulerJobId: String = ""
     private const val LAST_AUTOMATED_BACKUP_KEY = "lastAutomatedBackup"
     private val preferences = Injekt.get<Application>().getSharedPreferences("server_util", Context.MODE_PRIVATE)
     private const val AUTO_BACKUP_FILENAME = "auto"
-
-    // Progress/state machinery (mirrors import but with 'create' naming)
-    private val backupMutex = Mutex()
-
-    sealed class BackupCreateState {
-        data object Idle : BackupCreateState()
-
-        data object Success : BackupCreateState()
-
-        data object Failure : BackupCreateState()
-
-        data class CreatingCategories(
-            val current: Int,
-            val totalManga: Int,
-        ) : BackupCreateState()
-
-        data class CreatingMeta(
-            val current: Int,
-            val totalManga: Int,
-        ) : BackupCreateState()
-
-        data class CreatingSettings(
-            val current: Int,
-            val totalManga: Int,
-        ) : BackupCreateState()
-
-        data class CreatingManga(
-            val current: Int,
-            val totalManga: Int,
-            val title: String,
-        ) : BackupCreateState()
-    }
-
-    private val backupCreateIdToState = ConcurrentHashMap<String, BackupCreateState>()
-
-    val createNotifyFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = DROP_OLDEST)
-
-    fun getCreateState(id: String): BackupCreateState? = backupCreateIdToState[id]
-
-    private fun updateCreateState(
-        id: String,
-        state: BackupCreateState,
-    ) {
-        backupCreateIdToState[id] = state
-
-        scope.launch {
-            createNotifyFlow.emit(Unit)
-        }
-    }
-
-    private fun cleanupCreateState(id: String) {
-        val timer = Timer()
-        val delay = 1000L * 60 // 60 seconds
-
-        timer.schedule(
-            object : TimerTask() {
-                override fun run() {
-                    logger.debug { "cleanupCreateState: $id (${getCreateState(id)})" }
-                    backupCreateIdToState.remove(id)
-                }
-            },
-            delay,
-        )
-    }
 
     init {
         serverConfig.subscribeTo(
@@ -175,8 +99,14 @@ object ProtoBackupExport : ProtoBackupBase() {
     private fun createAutomatedBackup() {
         logger.info { "Creating automated backup..." }
 
-        // use async wrapper so the automated backup is tracked and does not block scheduler
-        createBackupAsync(BackupFlags.fromServerConfig())
+        createBackup(BackupFlags.fromServerConfig()).use { input ->
+            val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
+            automatedBackupDir.mkdirs()
+
+            val backupFile = File(applicationDirs.automatedBackupRoot, Backup.getFilename(AUTO_BACKUP_FILENAME))
+
+            backupFile.outputStream().use { output -> input.copyTo(output) }
+        }
     }
 
     private fun cleanupAutomatedBackups() {
@@ -217,10 +147,6 @@ object ProtoBackupExport : ProtoBackupBase() {
         }
     }
 
-    /**
-     * Synchronous creation (kept for compatibility).
-     * Returns InputStream with gzipped proto bytes — unchanged behavior.
-     */
     fun createBackup(flags: BackupFlags): InputStream {
         // Create root object
 
@@ -249,107 +175,5 @@ object ProtoBackupExport : ProtoBackupBase() {
             .use { it.write(byteArray) }
 
         return byteStream.inputStream()
-    }
-
-    /**
-     * Asynchronous wrapper modeled after ProtoBackupImport pattern, but with 'create' naming.
-     * Creates a tracked export and writes it to a file. Returns an id for the creation job.
-     */
-    @OptIn(DelicateCoroutinesApi::class)
-    fun createBackupAsync(
-        flags: BackupFlags,
-    ): String {
-        val createId = System.currentTimeMillis().toString()
-
-        logger.info { "createBackupAsync($createId): queued" }
-
-        updateCreateState(createId, BackupCreateState.Idle)
-
-        // Launch work on our scope; we use createMutex to serialize like import
-        scope.launch {
-            createMutex.withLock {
-                try {
-                    logger.info { "createBackupAsync($createId): creating..." }
-                    updateCreateState(createId, BackupCreateState.Idle)
-
-                    performCreate(createId, flags)
-                } catch (e: Exception) {
-                    logger.error(e) { "createBackupAsync($createId): failed due to" }
-                    updateCreateState(createId, BackupCreateState.Failure)
-                } finally {
-                    logger.info { "createBackupAsync($createId): finished with state ${getCreateState(createId)}" }
-                    cleanupCreateState(createId)
-                }
-            }
-        }
-
-        return createId
-    }
-
-    // A private mutex to serialize create jobs (mirrors import)
-    private val createMutex = Mutex()
-
-    private fun performCreate(
-        id: String,
-        flags: BackupFlags,
-    ) {
-        // We'll follow the staged approach and update states at the same logical points as restore
-
-        // Stage: fetching / building backup mangas (we pass a progress lambda that updates per-manga)
-        updateCreateState(id, BackupCreateState.CreatingSettings(0, 0))
-
-        val backupMangas =
-            BackupMangaHandler.backup(flags) { current, total, title ->
-                updateCreateState(id, BackupCreateState.CreatingManga(current, total, title))
-            }
-
-        updateCreateState(id, BackupCreateState.CreatingCategories(0, backupMangas.size))
-
-        // other pieces of client data
-        if (flags.includeClientData) {
-            updateCreateState(id, BackupCreateState.CreatingMeta(0, backupMangas.size))
-        }
-
-        // Build remaining parts and serialize; after this no DB connection is held during assembly/serialization
-        val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
-
-        val backup: Backup =
-            transaction {
-                Backup(
-                    backupMangas,
-                    BackupCategoryHandler.backup(flags),
-                    BackupSourceHandler.backup(backupMangas, flags),
-                    emptyList(),
-                    backupSourcePreferences,
-                    BackupGlobalMetaHandler.backup(flags),
-                    BackupSettingsHandler.backup(flags),
-                )
-            }
-
-        // serialize & gzip
-        updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size)) // reuse as "serializing"
-        val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-
-        val byteStream = Buffer()
-        (byteStream as Sink)
-            .gzip()
-            .buffer()
-            .use { it.write(byteArray) }
-
-        // write to file
-        try {
-            val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
-            automatedBackupDir.mkdirs()
-
-            val backupFile = File(applicationDirs.automatedBackupRoot, Backup.getFilename(AUTO_BACKUP_FILENAME + "_$id"))
-
-            updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size))
-            backupFile.outputStream().use { output -> byteStream.inputStream().copyTo(output) }
-
-            updateCreateState(id, BackupCreateState.Success)
-        } catch (e: Exception) {
-            logger.error(e) { "performCreate($id): failed writing file" }
-            updateCreateState(id, BackupCreateState.Failure)
-        }
     }
 }
