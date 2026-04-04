@@ -42,6 +42,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
+import java.util.Date
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.ConcurrentHashMap
@@ -56,6 +57,9 @@ object ProtoBackupExport : ProtoBackupBase() {
     private const val LAST_AUTOMATED_BACKUP_KEY = "lastAutomatedBackup"
     private val preferences = Injekt.get<Application>().getSharedPreferences("server_util", Context.MODE_PRIVATE)
     private const val AUTO_BACKUP_FILENAME = "auto"
+
+    // small helper for timings
+    private fun nowMs(): Long = System.nanoTime() / 1_000_000L
 
     // Progress/state machinery (mirrors import but with 'create' naming)
     sealed class BackupCreateState {
@@ -290,15 +294,17 @@ object ProtoBackupExport : ProtoBackupBase() {
         id: String,
         flags: BackupFlags,
     ) {
-        // We'll follow the staged approach and update states at the same logical points as restore
+        // timing: measure end-to-end and per-stage times
+        val totalStart = nowMs()
 
         // Stage: fetching / building backup mangas (we pass a progress lambda that updates per-manga)
-        updateCreateState(id, BackupCreateState.CreatingSettings(0, 0))
-
+        val fetchStart = nowMs()
         val backupMangas =
             BackupMangaHandler.backup(flags) { current, total, title ->
                 updateCreateState(id, BackupCreateState.CreatingManga(current, total, title))
             }
+        val fetchEnd = nowMs()
+        val fetchMs = fetchEnd - fetchStart
 
         updateCreateState(id, BackupCreateState.CreatingCategories(0, backupMangas.size))
 
@@ -308,6 +314,7 @@ object ProtoBackupExport : ProtoBackupBase() {
         }
 
         // Build remaining parts and serialize; after this no DB connection is held during assembly/serialization
+        val buildStart = nowMs()
         val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
 
         val backup: Backup =
@@ -322,18 +329,26 @@ object ProtoBackupExport : ProtoBackupBase() {
                     BackupSettingsHandler.backup(flags),
                 )
             }
+        val buildEnd = nowMs()
+        val buildMs = buildEnd - buildStart
 
         // serialize & gzip
-        updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size)) // reuse as "serializing"
+        val serializeStart = nowMs()
         val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+        val serializeEnd = nowMs()
+        val serializeMs = serializeEnd - serializeStart
 
+        val gzipStart = nowMs()
         val byteStream = Buffer()
         (byteStream as Sink)
             .gzip()
             .buffer()
             .use { it.write(byteArray) }
+        val gzipEnd = nowMs()
+        val gzipMs = gzipEnd - gzipStart
 
         // write to file
+        val writeStart = nowMs()
         try {
             val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
             automatedBackupDir.mkdirs()
@@ -347,6 +362,15 @@ object ProtoBackupExport : ProtoBackupBase() {
         } catch (e: Exception) {
             logger.error(e) { "performCreate($id): failed writing file" }
             updateCreateState(id, BackupCreateState.Failure)
+        }
+        val writeEnd = nowMs()
+        val writeMs = writeEnd - writeStart
+
+        val totalEnd = nowMs()
+        val totalMs = totalEnd - totalStart
+
+        logger.info {
+            "createBackup timing (id=$id): fetch=${fetchMs}ms, build=${buildMs}ms, serialize=${serializeMs}ms, gzip=${gzipMs}ms, write=${writeMs}ms, total=${totalMs}ms"
         }
     }
 }
