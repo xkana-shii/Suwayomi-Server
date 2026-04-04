@@ -45,6 +45,7 @@ import java.io.InputStream
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.system.measureTimeMillis
 import kotlin.time.Duration.Companion.days
 
 object ProtoBackupExport : ProtoBackupBase() {
@@ -290,7 +291,7 @@ object ProtoBackupExport : ProtoBackupBase() {
         id: String,
         flags: BackupFlags,
     ) {
-        // We'll follow the staged approach and update states at the same logical points as restore
+        val t0 = System.currentTimeMillis()
 
         // Stage: fetching / building backup mangas (we pass a progress lambda that updates per-manga)
         updateCreateState(id, BackupCreateState.CreatingSettings(0, 0))
@@ -299,6 +300,7 @@ object ProtoBackupExport : ProtoBackupBase() {
             BackupMangaHandler.backup(flags) { current, total, title ->
                 updateCreateState(id, BackupCreateState.CreatingManga(current, total, title))
             }
+        logger.info { "performCreate($id): manga stage done in ${System.currentTimeMillis() - t0}ms (${backupMangas.size} manga)" }
 
         updateCreateState(id, BackupCreateState.CreatingCategories(0, backupMangas.size))
 
@@ -325,13 +327,18 @@ object ProtoBackupExport : ProtoBackupBase() {
 
         // serialize & gzip
         updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size)) // reuse as "serializing"
-        val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-
+        val byteArray: ByteArray
+        val serializeMs = measureTimeMillis {
+            byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+        }
         val byteStream = Buffer()
-        (byteStream as Sink)
-            .gzip()
-            .buffer()
-            .use { it.write(byteArray) }
+        val gzipMs = measureTimeMillis {
+            (byteStream as Sink)
+                .gzip()
+                .buffer()
+                .use { it.write(byteArray) }
+        }
+        logger.info { "performCreate($id): serialize=${serializeMs}ms (${byteArray.size} bytes raw), gzip=${gzipMs}ms" }
 
         // write to file
         try {
@@ -341,7 +348,10 @@ object ProtoBackupExport : ProtoBackupBase() {
             val backupFile = File(applicationDirs.automatedBackupRoot, Backup.getFilename(AUTO_BACKUP_FILENAME + "_$id"))
 
             updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size))
-            backupFile.outputStream().use { output -> byteStream.inputStream().copyTo(output) }
+            val writeMs = measureTimeMillis {
+                backupFile.outputStream().use { output -> byteStream.inputStream().copyTo(output) }
+            }
+            logger.info { "performCreate($id): file write=${writeMs}ms, total wall time=${System.currentTimeMillis() - t0}ms" }
 
             updateCreateState(id, BackupCreateState.Success)
         } catch (e: Exception) {
