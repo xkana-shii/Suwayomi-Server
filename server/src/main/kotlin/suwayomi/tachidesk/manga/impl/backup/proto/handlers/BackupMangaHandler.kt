@@ -41,17 +41,12 @@ import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import suwayomi.tachidesk.manga.impl.track.Track as Tracker
-import io.github.oshai.kotlinlogging.KotlinLogging
 
 object BackupMangaHandler {
-    private val logger = KotlinLogging.logger {}
     private enum class RestoreMode {
         NEW,
         EXISTING,
     }
-
-    // small helper for timings
-    private fun nowMs(): Long = System.nanoTime() / 1_000_000L
 
     /**
      * Optimized backup that bulk-prefetches related tables inside a short db transaction,
@@ -66,8 +61,6 @@ object BackupMangaHandler {
             return emptyList()
         }
 
-        val tStart = nowMs()
-
         // Holder for prefetched data
         data class Prefetched(
             val mangaRows: List<ResultRow>,
@@ -79,7 +72,6 @@ object BackupMangaHandler {
         )
 
         // Stage 1: Bulk fetch everything we need inside a short transaction and convert to in-memory maps
-        val fetchStart = nowMs()
         val prefetched = dbTransaction {
             // 1) fetch manga rows
             val mangaRows = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
@@ -159,12 +151,10 @@ object BackupMangaHandler {
                 tracksByMangaId = tracksByMangaId,
             )
         } // transaction ends here; connection returned to pool
-        val fetchEnd = nowMs()
 
         // Stage 2: assemble BackupManga objects in-memory, reporting per-manga progress via callback
-        val assembleStart = nowMs()
         val total = prefetched.mangaRows.size
-        val result = prefetched.mangaRows.mapIndexed { index, mangaRow ->
+        return prefetched.mangaRows.mapIndexed { index, mangaRow ->
             val backupManga =
                 BackupManga(
                     source = mangaRow[MangaTable.sourceReference],
@@ -260,18 +250,9 @@ object BackupMangaHandler {
 
             backupManga
         }
-        val assembleEnd = nowMs()
-
-        val tEnd = nowMs()
-
-        logger.info {
-            "BackupMangaHandler.backup timing: dbFetch=${fetchEnd - fetchStart}ms, assemble=${assembleEnd - assembleStart}ms, total=${tEnd - tStart}ms"
-        }
-
-        return result
     }
 
-    // The rest of the restore functions remain unchanged...
+    // The rest of the original restore-related functions remain unchanged (restore logic is below)...
     fun restore(
         backupManga: BackupManga,
         categoryMapping: Map<Int, Int>,
