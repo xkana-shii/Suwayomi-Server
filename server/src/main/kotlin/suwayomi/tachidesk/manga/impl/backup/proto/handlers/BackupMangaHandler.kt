@@ -160,6 +160,17 @@ object BackupMangaHandler {
             )
         } // transaction ends here; connection returned to pool
         val fetchEnd = nowMs()
+        val fetchMs = fetchEnd - fetchStart
+
+        // For compatibility with old log format, map_total is the time spent mapping INSIDE the transaction.
+        // In this optimized workflow mapping happens outside the transaction, so it's 0 here.
+        val mapTotalMsInsideTransaction = 0L
+        val mappedCount = prefetched.mangaRows.size
+
+        // Log the inside-transaction line using the exact same format as the original implementation
+        logger.info {
+            "BackupMangaHandler.backup (inside transaction): fetch=${fetchMs}ms, map_total=${mapTotalMsInsideTransaction}ms, mapped_count=${mappedCount}"
+        }
 
         // Stage 2: assemble BackupManga objects in-memory, reporting per-manga progress via callback
         val assembleStart = nowMs()
@@ -264,9 +275,8 @@ object BackupMangaHandler {
 
         val tEnd = nowMs()
 
-        logger.info {
-            "BackupMangaHandler.backup timing: dbFetch=${fetchEnd - fetchStart}ms, assemble=${assembleEnd - assembleStart}ms, total=${tEnd - tStart}ms"
-        }
+        // Log total timing in the exact same format as the original implementation
+        logger.info { "BackupMangaHandler.backup timing: total=${tEnd - tStart}ms" }
 
         return result
     }
