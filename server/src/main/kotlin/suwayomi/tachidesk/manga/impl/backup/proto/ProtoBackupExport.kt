@@ -36,6 +36,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
+import kotlin.system.measureTimeMillis
 import kotlin.time.Duration.Companion.days
 
 object ProtoBackupExport : ProtoBackupBase() {
@@ -148,9 +149,13 @@ object ProtoBackupExport : ProtoBackupBase() {
     }
 
     fun createBackup(flags: BackupFlags): InputStream {
-        // Create root object
+        logger.info { "createBackup: starting (flags=$flags)" }
+        val t0 = System.currentTimeMillis()
 
+        // Create root object
         val backupMangas = BackupMangaHandler.backup(flags)
+        logger.info { "createBackup: manga stage done in ${System.currentTimeMillis() - t0}ms (${backupMangas.size} manga)" }
+
         val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
 
         val backup: Backup =
@@ -166,13 +171,19 @@ object ProtoBackupExport : ProtoBackupBase() {
                 )
             }
 
-        val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-
+        val byteArray: ByteArray
+        val serializeMs = measureTimeMillis {
+            byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+        }
         val byteStream = Buffer()
-        (byteStream as Sink)
-            .gzip()
-            .buffer()
-            .use { it.write(byteArray) }
+        val gzipMs = measureTimeMillis {
+            (byteStream as Sink)
+                .gzip()
+                .buffer()
+                .use { it.write(byteArray) }
+        }
+        logger.info { "createBackup: serialize=${serializeMs}ms (${byteArray.size} bytes raw), gzip=${gzipMs}ms" }
+        logger.info { "createBackup: total wall time=${System.currentTimeMillis() - t0}ms" }
 
         return byteStream.inputStream()
     }

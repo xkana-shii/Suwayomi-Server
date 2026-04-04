@@ -8,6 +8,8 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlin.system.measureTimeMillis
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
@@ -45,6 +47,8 @@ import kotlin.time.Duration.Companion.seconds
 import suwayomi.tachidesk.manga.impl.track.Track as Tracker
 
 object BackupMangaHandler {
+    private val logger = KotlinLogging.logger { }
+
     private enum class RestoreMode {
         NEW,
         EXISTING,
@@ -56,9 +60,23 @@ object BackupMangaHandler {
                 return@dbTransaction emptyList()
             }
 
-            val manga = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
+            logger.info { "backup: starting (flags=$flags)" }
+            val t0 = System.currentTimeMillis()
 
-            manga.map { mangaRow ->
+            val manga: List<ResultRow>
+            val mangaFetchMs = measureTimeMillis {
+                manga = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
+            }
+            logger.info { "backup: prefetch breakdown — manga=${mangaFetchMs}ms(${manga.size})" }
+
+            var totalMangaMetaMs = 0L
+            var totalChaptersFetchMs = 0L
+            var totalChapterMetaMs = 0L
+            var totalCategoriesMs = 0L
+            var totalTracksMs = 0L
+            var totalChapterCount = 0
+
+            val result = manga.map { mangaRow ->
                 val backupManga =
                     BackupManga(
                         source = mangaRow[MangaTable.sourceReference],
@@ -78,22 +96,32 @@ object BackupMangaHandler {
                 val mangaId = mangaRow[MangaTable.id].value
 
                 if (flags.includeClientData) {
-                    backupManga.meta = Manga.getMangaMetaMap(mangaId)
+                    totalMangaMetaMs += measureTimeMillis {
+                        backupManga.meta = Manga.getMangaMetaMap(mangaId)
+                    }
                 }
 
                 if (flags.includeChapters || flags.includeHistory) {
-                    val chapters =
-                        transaction {
-                            ChapterTable
-                                .selectAll()
-                                .where { ChapterTable.manga eq mangaId }
-                                .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
-                                .map {
-                                    ChapterTable.toDataClass(it)
-                                }
-                        }
+                    val chapters: List<suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass>
+                    totalChaptersFetchMs += measureTimeMillis {
+                        chapters =
+                            transaction {
+                                ChapterTable
+                                    .selectAll()
+                                    .where { ChapterTable.manga eq mangaId }
+                                    .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
+                                    .map {
+                                        ChapterTable.toDataClass(it)
+                                    }
+                            }
+                    }
+                    totalChapterCount += chapters.size
+
                     if (flags.includeChapters) {
-                        val chapterToMeta = Chapter.getChaptersMetaMaps(chapters.map { it.id })
+                        val chapterToMeta: Map<Int, Map<String, String>>
+                        totalChapterMetaMs += measureTimeMillis {
+                            chapterToMeta = Chapter.getChaptersMetaMaps(chapters.map { it.id })
+                        }
 
                         backupManga.chapters =
                             chapters.map {
@@ -132,39 +160,55 @@ object BackupMangaHandler {
                 }
 
                 if (flags.includeCategories) {
-                    backupManga.categories = CategoryManga.getMangaCategories(mangaId).map { it.order }
+                    totalCategoriesMs += measureTimeMillis {
+                        backupManga.categories = CategoryManga.getMangaCategories(mangaId).map { it.order }
+                    }
                 }
 
                 if (flags.includeTracking) {
-                    val tracks =
-                        Tracker.getTrackRecordsByMangaId(mangaRow[MangaTable.id].value).mapNotNull {
-                            if (it.record == null) {
-                                null
-                            } else {
-                                BackupTracking(
-                                    syncId = it.record.trackerId,
-                                    // forced not null so its compatible with 1.x backup system
-                                    libraryId = it.record.libraryId ?: 0,
-                                    mediaId = it.record.remoteId,
-                                    title = it.record.title,
-                                    lastChapterRead = it.record.lastChapterRead.toFloat(),
-                                    totalChapters = it.record.totalChapters,
-                                    score = it.record.score.toFloat(),
-                                    status = it.record.status,
-                                    startedReadingDate = it.record.startDate,
-                                    finishedReadingDate = it.record.finishDate,
-                                    trackingUrl = it.record.remoteUrl,
-                                    private = it.record.private,
-                                )
+                    totalTracksMs += measureTimeMillis {
+                        val tracks =
+                            Tracker.getTrackRecordsByMangaId(mangaRow[MangaTable.id].value).mapNotNull {
+                                if (it.record == null) {
+                                    null
+                                } else {
+                                    BackupTracking(
+                                        syncId = it.record.trackerId,
+                                        // forced not null so its compatible with 1.x backup system
+                                        libraryId = it.record.libraryId ?: 0,
+                                        mediaId = it.record.remoteId,
+                                        title = it.record.title,
+                                        lastChapterRead = it.record.lastChapterRead.toFloat(),
+                                        totalChapters = it.record.totalChapters,
+                                        score = it.record.score.toFloat(),
+                                        status = it.record.status,
+                                        startedReadingDate = it.record.startDate,
+                                        finishedReadingDate = it.record.finishDate,
+                                        trackingUrl = it.record.remoteUrl,
+                                        private = it.record.private,
+                                    )
+                                }
                             }
+                        if (tracks.isNotEmpty()) {
+                            backupManga.tracking = tracks
                         }
-                    if (tracks.isNotEmpty()) {
-                        backupManga.tracking = tracks
                     }
                 }
 
                 backupManga
             }
+
+            logger.info {
+                "backup: per-manga fetch totals — " +
+                    "mangaMeta=${totalMangaMetaMs}ms, " +
+                    "chapters=${totalChaptersFetchMs}ms(${totalChapterCount}), " +
+                    "chapterMeta=${totalChapterMetaMs}ms, " +
+                    "categories=${totalCategoriesMs}ms, " +
+                    "tracks=${totalTracksMs}ms"
+            }
+            logger.info { "backup: assembly done in ${System.currentTimeMillis() - t0}ms (${manga.size} manga)" }
+
+            result
         }
 
     fun restore(
