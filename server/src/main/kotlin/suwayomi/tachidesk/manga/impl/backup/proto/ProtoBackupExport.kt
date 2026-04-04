@@ -42,6 +42,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
+import java.util.Date
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.ConcurrentHashMap
@@ -57,10 +58,10 @@ object ProtoBackupExport : ProtoBackupBase() {
     private val preferences = Injekt.get<Application>().getSharedPreferences("server_util", Context.MODE_PRIVATE)
     private const val AUTO_BACKUP_FILENAME = "auto"
 
-    // helper for ms timings
+    // small helper for timings
     private fun nowMs(): Long = System.nanoTime() / 1_000_000L
 
-    // Progress/state machinery (create naming)
+    // Progress/state machinery (mirrors import but with 'create' naming)
     sealed class BackupCreateState {
         data object Idle : BackupCreateState()
 
@@ -175,15 +176,8 @@ object ProtoBackupExport : ProtoBackupBase() {
     private fun createAutomatedBackup() {
         logger.info { "Creating automated backup..." }
 
-        // Keep original synchronous automated behavior
-        createBackup(BackupFlags.fromServerConfig()).use { input ->
-            val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
-            automatedBackupDir.mkdirs()
-
-            val backupFile = File(applicationDirs.automatedBackupRoot, Backup.getFilename(AUTO_BACKUP_FILENAME))
-
-            backupFile.outputStream().use { output -> input.copyTo(output) }
-        }
+        // use async wrapper so the automated backup is tracked and does not block scheduler
+        createBackupAsync(BackupFlags.fromServerConfig())
     }
 
     private fun cleanupAutomatedBackups() {
@@ -227,29 +221,17 @@ object ProtoBackupExport : ProtoBackupBase() {
     /**
      * Synchronous creation (kept for compatibility).
      * Returns InputStream with gzipped proto bytes — unchanged behavior.
-     * Includes millisecond timings for benchmarking.
      */
     fun createBackup(flags: BackupFlags): InputStream {
-        val totalStart = nowMs()
+        // Create root object
 
-        // 1) backup mangas (this may be the expensive step)
-        val fetchStart = nowMs()
         val backupMangas = BackupMangaHandler.backup(flags)
-        val fetchEnd = nowMs()
-        val fetchMs = fetchEnd - fetchStart
-
-        // 2) backup source preferences (and other small client data)
-        val prefsStart = nowMs()
         val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
-        val prefsEnd = nowMs()
-        val prefsMs = prefsEnd - prefsStart
 
-        // 3) build the Backup object inside a transaction (use already-fetched backupMangas; do NOT call backup() again)
-        val buildStart = nowMs()
         val backup: Backup =
             transaction {
                 Backup(
-                    backupMangas,
+                    BackupMangaHandler.backup(flags),
                     BackupCategoryHandler.backup(flags),
                     BackupSourceHandler.backup(backupMangas, flags),
                     emptyList(),
@@ -258,37 +240,20 @@ object ProtoBackupExport : ProtoBackupBase() {
                     BackupSettingsHandler.backup(flags),
                 )
             }
-        val buildEnd = nowMs()
-        val buildMs = buildEnd - buildStart
 
-        // 4) serialize
-        val serializeStart = nowMs()
         val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-        val serializeEnd = nowMs()
-        val serializeMs = serializeEnd - serializeStart
 
-        // 5) gzip / buffer
-        val gzipStart = nowMs()
         val byteStream = Buffer()
         (byteStream as Sink)
             .gzip()
             .buffer()
             .use { it.write(byteArray) }
-        val gzipEnd = nowMs()
-        val gzipMs = gzipEnd - gzipStart
-
-        val totalEnd = nowMs()
-        val totalMs = totalEnd - totalStart
-
-        logger.info {
-            "createBackup timing: backupMangas=${fetchMs}ms, prefs=${prefsMs}ms, build=${buildMs}ms, serialize=${serializeMs}ms, gzip=${gzipMs}ms, total=${totalMs}ms"
-        }
 
         return byteStream.inputStream()
     }
 
     /**
-     * Asynchronous wrapper modeled after ProtoBackupImport pattern.
+     * Asynchronous wrapper modeled after ProtoBackupImport pattern, but with 'create' naming.
      * Creates a tracked create job and writes it to a file. Returns an id for the creation job.
      */
     @OptIn(DelicateCoroutinesApi::class)
@@ -322,16 +287,17 @@ object ProtoBackupExport : ProtoBackupBase() {
         return createId
     }
 
-    // Mutex to serialize create jobs
+    // A private mutex to serialize create jobs (mirrors import)
     private val createMutex = Mutex()
 
     private fun performCreate(
         id: String,
         flags: BackupFlags,
     ) {
+        // timing: measure end-to-end and per-stage times
         val totalStart = nowMs()
 
-        // 1) fetch/build backup mangas (pass progress callback)
+        // Stage: fetching / building backup mangas (we pass a progress lambda that updates per-manga)
         val fetchStart = nowMs()
         val backupMangas =
             BackupMangaHandler.backup(flags) { current, total, title ->
@@ -342,12 +308,12 @@ object ProtoBackupExport : ProtoBackupBase() {
 
         updateCreateState(id, BackupCreateState.CreatingCategories(0, backupMangas.size))
 
-        // 2) other client data
+        // other pieces of client data
         if (flags.includeClientData) {
             updateCreateState(id, BackupCreateState.CreatingMeta(0, backupMangas.size))
         }
 
-        // 3) build remaining parts
+        // Build remaining parts and serialize; after this no DB connection is held during assembly/serialization
         val buildStart = nowMs()
         val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
 
@@ -366,13 +332,12 @@ object ProtoBackupExport : ProtoBackupBase() {
         val buildEnd = nowMs()
         val buildMs = buildEnd - buildStart
 
-        // 4) serialize
+        // serialize & gzip
         val serializeStart = nowMs()
         val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
         val serializeEnd = nowMs()
         val serializeMs = serializeEnd - serializeStart
 
-        // 5) gzip
         val gzipStart = nowMs()
         val byteStream = Buffer()
         (byteStream as Sink)
@@ -382,7 +347,7 @@ object ProtoBackupExport : ProtoBackupBase() {
         val gzipEnd = nowMs()
         val gzipMs = gzipEnd - gzipStart
 
-        // 6) write to file
+        // write to file
         val writeStart = nowMs()
         try {
             val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
