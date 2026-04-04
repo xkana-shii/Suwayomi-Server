@@ -42,6 +42,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
+import java.util.Date
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.ConcurrentHashMap
@@ -58,6 +59,8 @@ object ProtoBackupExport : ProtoBackupBase() {
     private const val AUTO_BACKUP_FILENAME = "auto"
 
     // Progress/state machinery (mirrors import but with 'create' naming)
+    private val backupMutex = Mutex()
+
     sealed class BackupCreateState {
         data object Idle : BackupCreateState()
 
@@ -250,7 +253,7 @@ object ProtoBackupExport : ProtoBackupBase() {
 
     /**
      * Asynchronous wrapper modeled after ProtoBackupImport pattern, but with 'create' naming.
-     * Creates a tracked create job and writes it to a file. Returns an id for the creation job.
+     * Creates a tracked export and writes it to a file. Returns an id for the creation job.
      */
     @OptIn(DelicateCoroutinesApi::class)
     fun createBackupAsync(
@@ -262,7 +265,7 @@ object ProtoBackupExport : ProtoBackupBase() {
 
         updateCreateState(createId, BackupCreateState.Idle)
 
-        // Launch work on our scope; serialize via createMutex to mirror import
+        // Launch work on our scope; we use createMutex to serialize like import
         scope.launch {
             createMutex.withLock {
                 try {
