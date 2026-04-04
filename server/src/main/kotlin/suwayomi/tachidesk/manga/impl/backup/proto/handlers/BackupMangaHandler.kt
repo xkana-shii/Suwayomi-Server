@@ -252,7 +252,7 @@ object BackupMangaHandler {
         }
     }
 
-    // The rest of the original restore-related functions remain unchanged (restore logic is below)
+    // The rest of the original restore-related functions remain unchanged (restore logic is below)...
     fun restore(
         backupManga: BackupManga,
         categoryMapping: Map<Int, Int>,
