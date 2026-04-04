@@ -24,6 +24,7 @@ import suwayomi.tachidesk.manga.impl.backup.BackupFlags
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupCategoryHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupGlobalMetaHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupMangaHandler
+import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupPreferenceHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSettingsHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSourceHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.models.Backup
@@ -150,6 +151,7 @@ object ProtoBackupExport : ProtoBackupBase() {
         // Create root object
 
         val backupMangas = BackupMangaHandler.backup(flags)
+        val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
 
         val backup: Backup =
             transaction {
@@ -157,6 +159,8 @@ object ProtoBackupExport : ProtoBackupBase() {
                     BackupMangaHandler.backup(flags),
                     BackupCategoryHandler.backup(flags),
                     BackupSourceHandler.backup(backupMangas, flags),
+                    emptyList(),
+                    backupSourcePreferences,
                     BackupGlobalMetaHandler.backup(flags),
                     BackupSettingsHandler.backup(flags),
                 )

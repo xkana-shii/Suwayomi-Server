@@ -34,6 +34,27 @@ data class BackupManga(
     @ProtoNumber(103) var viewer_flags: Int? = null,
     @ProtoNumber(104) var history: List<BackupHistory> = emptyList(),
     @ProtoNumber(105) var updateStrategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE,
+
+    // Mihon values start here
+    @ProtoNumber(108) var excludedScanlators: List<String> = emptyList(),
+    @ProtoNumber(109) var version: Long = 0,
+    @ProtoNumber(110) var notes: String = "",
+    @ProtoNumber(111) var initialized: Boolean = false,
+
+    // SY specific values
+    // @ProtoNumber(600) var mergedMangaReferences: List<BackupMergedMangaReference> = emptyList(),
+    // @ProtoNumber(601) var flatMetadata: BackupFlatMetadata? = null,
+    @ProtoNumber(602) var customStatus: Int = 0,
+    @ProtoNumber(603) var customThumbnailUrl: String? = null,
+
+    // J2K specific values
+    @ProtoNumber(800) var customTitle: String? = null,
+    @ProtoNumber(801) var customArtist: String? = null,
+    @ProtoNumber(802) var customAuthor: String? = null,
+    // skipping 803 due to using duplicate value in previous builds
+    @ProtoNumber(804) var customDescription: String? = null,
+    @ProtoNumber(805) var customGenre: List<String>? = null,
+
     // suwayomi
     @ProtoNumber(9000) var meta: Map<String, String> = emptyMap(),
 )

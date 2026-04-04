@@ -13,6 +13,16 @@ data class Backup(
     // Bump by 100 to specify this is a 0.x value
     // @ProtoNumber(100) var brokenBackupSources: List<BrokenBackupSource> = emptyList(),
     @ProtoNumber(101) var backupSources: List<BackupSource> = emptyList(),
+    @ProtoNumber(104) var backupPreferences: List<BackupPreference> = emptyList(),
+    @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
+/*
+    @ProtoNumber(106) var backupExtensionRepo: List<BackupExtensionRepos> = emptyList(),
+    // SY specific values
+    @ProtoNumber(600) var backupSavedSearches: List<BackupSavedSearch> = emptyList(),
+    // KMK -->
+    // Global Popular/Latest feeds
+    @ProtoNumber(610) var backupFeeds: List<BackupFeed> = emptyList(),
+ */
     // suwayomi
     @ProtoNumber(9000) var meta: Map<String, String> = emptyMap(),
     @ProtoNumber(9001) var serverSettings: BackupServerSettings?,

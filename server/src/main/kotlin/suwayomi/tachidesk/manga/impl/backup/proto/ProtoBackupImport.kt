@@ -28,6 +28,7 @@ import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupValidator.validate
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupCategoryHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupGlobalMetaHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupMangaHandler
+import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupPreferenceHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSettingsHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSourceHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.models.Backup
@@ -192,6 +193,8 @@ object ProtoBackupImport : ProtoBackupBase() {
             BackupGlobalMetaHandler.restore(backup.meta)
 
             BackupSourceHandler.restore(backup.backupSources)
+
+            BackupPreferenceHandler.restore(backup.backupSourcePreferences)
         }
 
         // Store source mapping for error messages
