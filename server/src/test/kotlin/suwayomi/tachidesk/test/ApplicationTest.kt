@@ -157,7 +157,6 @@ open class ApplicationTest {
             // in-memory database, don't discard database between connections/transactions
             Database.connect("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1;", "org.h2.Driver")
 
-            // databaseUp now takes no arguments; call without passing db
             databaseUp()
 
             LocalSource.register()
