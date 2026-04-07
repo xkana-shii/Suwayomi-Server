@@ -14,8 +14,10 @@ import suwayomi.tachidesk.graphql.types.MangaType
 import suwayomi.tachidesk.manga.impl.Manga
 import suwayomi.tachidesk.manga.impl.MangaList
 import suwayomi.tachidesk.manga.impl.metadata.AniListMetadataProvider
+import suwayomi.tachidesk.manga.impl.metadata.MangaBakaMetadataProvider
 import suwayomi.tachidesk.manga.impl.metadata.MangaUpdatesMetadataProvider
 import suwayomi.tachidesk.manga.impl.metadata.MetadataProvider
+import suwayomi.tachidesk.manga.impl.metadata.MyAnimeListMetadataProvider
 import suwayomi.tachidesk.manga.impl.util.getThumbnailDownloadPath
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse
 import suwayomi.tachidesk.manga.model.table.MangaStatus
@@ -32,9 +34,11 @@ class MetadataMutation {
 
     private val providers: Map<String, MetadataProvider> =
         listOf(
-            AniListMetadataProvider(),
+            MangaBakaMetadataProvider(),
             MangaUpdatesMetadataProvider(),
-        ).associateBy { it.name.lowercase() }
+            MyAnimeListMetadataProvider(),
+            AniListMetadataProvider(),
+            ).associateBy { it.name.lowercase() }
 
     // --- Search ---
 
