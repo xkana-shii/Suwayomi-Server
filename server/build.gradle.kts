@@ -127,6 +127,7 @@ application {
             "-XX:MaxGCPauseMillis=200",
             "-XX:MaxMetaspaceSize=512m",
             "-XX:ReservedCodeCacheSize=256m",
+            "-XX:ParallelGCThreads=8",
         )
     mainClass.set(MainClass)
 }
