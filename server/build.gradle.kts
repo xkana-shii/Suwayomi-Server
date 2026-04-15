@@ -120,13 +120,6 @@ application {
     applicationDefaultJvmArgs =
         listOf(
             "-Djunrar.extractor.thread-keep-alive-seconds=30",
-            "-Xms1g",
-            "-Xmx4g",
-            "-XX:+UseG1GC",
-            "-XX:G1HeapRegionSize=32m",
-            "-XX:MaxGCPauseMillis=200",
-            "-XX:MaxMetaspaceSize=512m",
-            "-XX:ReservedCodeCacheSize=256m",
         )
     mainClass.set(MainClass)
 }
