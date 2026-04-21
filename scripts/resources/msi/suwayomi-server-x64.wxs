@@ -4,8 +4,6 @@
     Version="$(var.ProductVersion)" Language="1033" Name="Suwayomi Server" Manufacturer="Suwayomi">
     <Package InstallerVersion="300" Compressed="yes" />
     <Media Id="1" Cabinet="Suwayomi_Server.cab" EmbedCab="yes" />
-    <UIRef Id="WixUI_InstallDir" />
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
     <Condition Message="This version of Windows does not support deploying 64-bit packages.">
       VersionNT64
