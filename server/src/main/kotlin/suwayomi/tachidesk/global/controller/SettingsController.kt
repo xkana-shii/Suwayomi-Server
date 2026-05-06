@@ -8,10 +8,6 @@ package suwayomi.tachidesk.global.controller
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import io.javalin.http.HttpStatus
-import io.javalin.http.UnauthorizedResponse
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import suwayomi.tachidesk.global.impl.About
 import suwayomi.tachidesk.global.impl.AboutDataClass
 import suwayomi.tachidesk.global.impl.AppUpdate
@@ -22,7 +18,6 @@ import suwayomi.tachidesk.server.JavalinSetup.getAttribute
 import suwayomi.tachidesk.server.user.requireUser
 import suwayomi.tachidesk.server.util.handler
 import suwayomi.tachidesk.server.util.withOperation
-import kotlin.system.exitProcess
 
 /** Settings Page/Screen */
 object SettingsController {
@@ -62,33 +57,6 @@ object SettingsController {
             },
             withResults = {
                 json<Array<UpdateDataClass>>(HttpStatus.OK)
-            },
-        )
-
-    /** Shuts down the server */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    val shutdown =
-        handler(
-            documentWith = {
-                withOperation {
-                    summary("Shutdown Suwayomi-Server")
-                    description("Shuts down the server process.")
-                }
-            },
-            behaviorOf = { ctx ->
-                val remoteAddr = ctx.req().remoteAddr
-                if (remoteAddr != "127.0.0.1" && remoteAddr != "::1" && remoteAddr != "0:0:0:0:0:0:0:1") {
-                    throw UnauthorizedResponse("Shutdown only allowed from localhost.")
-                }
-                ctx.result("Server is shutting down.")
-                ctx.status(HttpStatus.OK)
-                GlobalScope.launch {
-                    delay(250)
-                    exitProcess(0)
-                }
-            },
-            withResults = {
-                httpCode(HttpStatus.OK)
             },
         )
 }
