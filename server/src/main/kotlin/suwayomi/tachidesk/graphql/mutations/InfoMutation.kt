@@ -11,8 +11,11 @@ import suwayomi.tachidesk.graphql.types.UpdateState.IDLE
 import suwayomi.tachidesk.graphql.types.WebUIFlavor
 import suwayomi.tachidesk.graphql.types.WebUIUpdateStatus
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.util.ExitCode
 import suwayomi.tachidesk.server.util.WebInterfaceManager
+import suwayomi.tachidesk.server.util.shutdownApp
 import java.util.concurrent.CompletableFuture
+import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.seconds
 
 class InfoMutation {
@@ -23,6 +26,15 @@ class InfoMutation {
     data class WebUIUpdatePayload(
         val clientMutationId: String?,
         val updateStatus: WebUIUpdateStatus,
+    )
+
+    data class ShutdownServerInput(
+        val clientMutationId: String? = null,
+    )
+
+    data class ShutdownServerPayload(
+        val clientMutationId: String?,
+        val success: Boolean,
     )
 
     @RequireAuth
@@ -75,6 +87,22 @@ class InfoMutation {
 
                     WebInterfaceManager.status.first { it.state == IDLE }
                 }
+            }
+        }
+
+    @RequireAuth
+    fun shutdownServer(input: ShutdownServerInput): CompletableFuture<DataFetcherResult<ShutdownServerPayload?>> =
+        future {
+            asDataFetcherResult {
+                thread(start = true, isDaemon = false) {
+                    Thread.sleep(250)
+                    shutdownApp(ExitCode.Success)
+                }
+
+                ShutdownServerPayload(
+                    clientMutationId = input.clientMutationId,
+                    success = true,
+                )
             }
         }
 }
