@@ -2,7 +2,6 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
-import graphql.execution.DataFetcherResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import suwayomi.tachidesk.graphql.directives.RequireAuth
@@ -88,18 +87,16 @@ class InfoMutation {
         }
 
     @RequireAuth
-    fun shutdownServer(input: ShutdownServerInput): CompletableFuture<DataFetcherResult<ShutdownServerPayload?>> =
+    fun shutdownServer(input: ShutdownServerInput): CompletableFuture<ShutdownServerPayload?> =
         future {
-            asDataFetcherResult {
-                thread(start = true, isDaemon = false) {
-                    Thread.sleep(250)
-                    shutdownApp(ExitCode.Success)
-                }
-
-                ShutdownServerPayload(
-                    clientMutationId = input.clientMutationId,
-                    success = true,
-                )
+            thread(start = true, isDaemon = false) {
+                Thread.sleep(250)
+                shutdownApp(ExitCode.Success)
             }
+
+            ShutdownServerPayload(
+                clientMutationId = input.clientMutationId,
+                success = true,
+            )
         }
 }

@@ -1,14 +1,16 @@
+@file:Suppress("RedundantNullableReturnType", "unused")
+
 package suwayomi.tachidesk.graphql.mutations
 
 import eu.kanade.tachiyomi.source.local.LocalSource
 import eu.kanade.tachiyomi.source.local.image.LocalCoverManager
 import eu.kanade.tachiyomi.source.local.io.LocalSourceFileSystem
 import eu.kanade.tachiyomi.source.model.SManga
-import graphql.execution.DataFetcherResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
-import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.MangaType
 import suwayomi.tachidesk.manga.impl.Manga
@@ -38,7 +40,7 @@ class MetadataMutation {
             MangaUpdatesMetadataProvider(),
             MyAnimeListMetadataProvider(),
             AniListMetadataProvider(),
-            ).associateBy { it.name.lowercase() }
+        ).associateBy { it.name.lowercase() }
 
     // --- Search ---
 
@@ -64,34 +66,32 @@ class MetadataMutation {
     )
 
     @RequireAuth
-    fun searchMetadataProvider(input: SearchMetadataProviderInput): CompletableFuture<DataFetcherResult<SearchMetadataProviderPayload?>> {
+    fun searchMetadataProvider(input: SearchMetadataProviderInput): CompletableFuture<SearchMetadataProviderPayload?> {
         val (clientMutationId, providerName, query, author) = input
 
         return future {
-            asDataFetcherResult {
-                val provider =
-                    providers[providerName.lowercase()]
-                        ?: throw IllegalArgumentException(
-                            "Unknown provider '$providerName'. Available: ${providers.keys.joinToString()}",
-                        )
+            val provider =
+                providers[providerName.lowercase()]
+                    ?: throw IllegalArgumentException(
+                        "Unknown provider '$providerName'. Available: ${providers.keys.joinToString()}",
+                    )
 
-                val results =
-                    provider.search(query, author).map {
-                        MetadataSearchResultType(
-                            externalId = it.externalId,
-                            title = it.title,
-                            author = it.author,
-                            coverUrl = it.coverUrl,
-                            year = it.year,
-                            description = it.description,
-                        )
-                    }
+            val results =
+                provider.search(query, author).map {
+                    MetadataSearchResultType(
+                        externalId = it.externalId,
+                        title = it.title,
+                        author = it.author,
+                        coverUrl = it.coverUrl,
+                        year = it.year,
+                        description = it.description,
+                    )
+                }
 
-                SearchMetadataProviderPayload(
-                    clientMutationId = clientMutationId,
-                    results = results,
-                )
-            }
+            SearchMetadataProviderPayload(
+                clientMutationId = clientMutationId,
+                results = results,
+            )
         }
     }
 
@@ -111,54 +111,52 @@ class MetadataMutation {
     )
 
     @RequireAuth
-    fun applyMetadataMatch(input: ApplyMetadataMatchInput): CompletableFuture<DataFetcherResult<ApplyMetadataMatchPayload?>> {
+    fun applyMetadataMatch(input: ApplyMetadataMatchInput): CompletableFuture<ApplyMetadataMatchPayload?> {
         val (clientMutationId, mangaId, providerName, externalId, includeCover) = input
 
         return future {
-            asDataFetcherResult {
-                val provider =
-                    providers[providerName.lowercase()]
-                        ?: throw IllegalArgumentException(
-                            "Unknown provider '$providerName'. Available: ${providers.keys.joinToString()}",
-                        )
+            val provider =
+                providers[providerName.lowercase()]
+                    ?: throw IllegalArgumentException(
+                        "Unknown provider '$providerName'. Available: ${providers.keys.joinToString()}",
+                    )
 
-                val details = provider.getDetails(externalId)
+            val details = provider.getDetails(externalId)
 
-                val row =
-                    transaction {
-                        MangaTable.selectAll().where { MangaTable.id eq mangaId }.firstOrNull()
-                            ?: throw IllegalArgumentException("Manga with id $mangaId not found")
-                    }
-
-                // Step 1: Update DB with text metadata
+            val row =
                 transaction {
-                    MangaTable.update({ MangaTable.id eq mangaId }) { update ->
-                        details.title?.let { update[title] = it }
-                        details.author?.let { update[author] = it }
-                        details.artist?.let { update[artist] = it }
-                        details.description?.let { update[description] = it }
-                        details.genre?.let { update[genre] = it.joinToString(", ") }
-                        details.status?.let { update[status] = it }
-                    }
+                    MangaTable.selectAll().where { MangaTable.id eq mangaId }.firstOrNull()
+                        ?: throw IllegalArgumentException("Manga with id $mangaId not found")
                 }
 
-                // Step 2: Download and save cover if requested
-                val sourceId = row[MangaTable.sourceReference]
-                if (includeCover && details.coverUrl != null) {
-                    downloadAndSaveCover(mangaId, details.coverUrl, sourceId, row[MangaTable.url])
+            // Step 1: Update DB with text metadata
+            transaction {
+                MangaTable.update({ MangaTable.id eq mangaId }) { update ->
+                    details.title?.let { update[title] = it }
+                    details.author?.let { update[author] = it }
+                    details.artist?.let { update[artist] = it }
+                    details.description?.let { update[description] = it }
+                    details.genre?.let { update[genre] = it.joinToString(", ") }
+                    details.status?.let { update[status] = it }
                 }
-
-                // Step 4: Return updated manga
-                val manga =
-                    transaction {
-                        MangaType(MangaTable.selectAll().where { MangaTable.id eq mangaId }.first())
-                    }
-
-                ApplyMetadataMatchPayload(
-                    clientMutationId = clientMutationId,
-                    manga = manga,
-                )
             }
+
+            // Step 2: Download and save cover if requested
+            val sourceId = row[MangaTable.sourceReference]
+            if (includeCover && details.coverUrl != null) {
+                downloadAndSaveCover(mangaId, details.coverUrl, sourceId, row[MangaTable.url])
+            }
+
+            // Step 4: Return updated manga
+            val manga =
+                transaction {
+                    MangaType(MangaTable.selectAll().where { MangaTable.id eq mangaId }.first())
+                }
+
+            ApplyMetadataMatchPayload(
+                clientMutationId = clientMutationId,
+                manga = manga,
+            )
         }
     }
 
@@ -169,7 +167,9 @@ class MetadataMutation {
         mangaUrl: String,
     ) {
         val imageBytes =
-            URI(coverUrl).toURL().openStream().use { it.readBytes() }
+            withContext(Dispatchers.IO) {
+                URI(coverUrl).toURL().openStream()
+            }.use { it.readBytes() }
 
         // Clear old cache and save new thumbnail
         Manga.clearThumbnail(mangaId)

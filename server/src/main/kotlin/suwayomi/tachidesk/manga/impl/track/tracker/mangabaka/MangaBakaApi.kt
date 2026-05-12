@@ -20,7 +20,6 @@ import okhttp3.FormBody
 import okhttp3.Headers.Companion.headersOf
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
-import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.Track.htmlDecode
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaItem
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaItemResult
@@ -29,14 +28,15 @@ import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaListRe
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaSearchResult
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaUserProfileResponse
+import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import suwayomi.tachidesk.server.generated.BuildConfig
 import uy.kohesive.injekt.injectLazy
 import java.math.RoundingMode
-import java.util.Collections
-import java.util.Locale
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.Collections
+import java.util.Locale
 
 class MangaBakaApi(
     private val trackId: Int,

@@ -1,12 +1,14 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
 import kotlinx.serialization.json.Json
-import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
+import suwayomi.tachidesk.manga.impl.track.tracker.extractToken
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
+import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
+import java.io.IOException
 
 class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
@@ -105,6 +107,17 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
                     PAUSED, DROPPED, PLAN_TO_READ, CONSIDERING -> track.status
                     else -> if (hasReadChapters) READING else track.status
                 }
+            } else {
+                try {
+                    val seriesData = api.fetchSeriesData(track.remote_id)
+                    val isCompletedRemotely = seriesData.status == "completed" || seriesData.status == "cancelled"
+                    val reachedEnd = track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters
+                    if (!(isCompletedRemotely && reachedEnd)) {
+                        track.status = if (hasReadChapters) READING else PLAN_TO_READ
+                        track.finished_reading_date = 0
+                    }
+                } catch (_: Exception) {
+                }
             }
 
             update(track, hasReadChapters)
@@ -136,8 +149,29 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
             track.copyPersonalFrom(remoteTrack)
             track.title = remoteTrack.title
             track.total_chapters = remoteTrack.total_chapters
+
+            if (track.status == COMPLETED) {
+                try {
+                    val resolvedId = api.resolveId(track.remote_id)
+                    val seriesData = api.fetchSeriesData(resolvedId)
+                    val isCompletedRemotely = seriesData.status == "completed" || seriesData.status == "cancelled"
+                    val reachedEnd = track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters
+                    if (!(isCompletedRemotely && reachedEnd)) {
+                        track.status = if (track.last_chapter_read > 0.0) READING else PLAN_TO_READ
+                        track.finished_reading_date = 0
+                    }
+                } catch (_: Exception) {
+                }
+            }
         }
         return track
+    }
+
+    override fun authUrl(): String = MangaBakaApi.authUrl().toString()
+
+    override suspend fun authCallback(url: String) {
+        val code = url.extractToken("code") ?: throw IOException("cannot find token")
+        login(code)
     }
 
     override suspend fun login(username: String, password: String) = login(password)
