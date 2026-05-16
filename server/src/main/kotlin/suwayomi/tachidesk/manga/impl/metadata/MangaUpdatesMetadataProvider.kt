@@ -46,7 +46,7 @@ class MangaUpdatesMetadataProvider : MetadataProvider {
                 author = null,
                 coverUrl = record.image?.url?.original,
                 year = record.year?.takeWhile { it.isDigit() }?.toIntOrNull(),
-                description = record.description?.htmlDecode(),
+                description = record.description?.htmlDecode() ?: "",
             )
         }
     }
@@ -71,10 +71,10 @@ class MangaUpdatesMetadataProvider : MetadataProvider {
                 ?.mapNotNull { it.name }
 
         return MetadataDetails(
-            title = series.title?.htmlDecode(),
+            title = series.title?.htmlDecode() ?: "",
             author = authors?.joinToString(", ")?.takeIf { it.isNotEmpty() },
             artist = artists?.joinToString(", ")?.takeIf { it.isNotEmpty() },
-            description = series.description?.htmlDecode(),
+            description = series.description?.htmlDecode() ?: "",
             genre = series.genres?.mapNotNull { it.genre }?.takeIf { it.isNotEmpty() },
             status = mapStatus(series.status),
             coverUrl = series.image?.url?.original,

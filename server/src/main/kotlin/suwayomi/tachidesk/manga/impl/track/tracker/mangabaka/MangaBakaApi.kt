@@ -43,51 +43,58 @@ class MangaBakaApi(
     baseClient: OkHttpClient,
     interceptor: MangaBakaInterceptor,
 ) {
-
     private val json: Json by injectLazy()
 
-    private val client = baseClient.newBuilder().addInterceptor {
-        it.request().newBuilder()
-            .header(
-                "User-Agent",
-                buildString {
-                    append("${BuildConfig.NAME}/v${BuildConfig.VERSION} ")
-                    append("(${BuildConfig.BUILD_TYPE})")
-                    append("(${BuildConfig.GITHUB})")
-                },
-            )
-            .build()
-            .let(it::proceed)
-    }.build()
+    private val client =
+        baseClient
+            .newBuilder()
+            .addInterceptor {
+                it
+                    .request()
+                    .newBuilder()
+                    .header(
+                        "User-Agent",
+                        buildString {
+                            append("${BuildConfig.NAME}/v${BuildConfig.VERSION} ")
+                            append("(${BuildConfig.BUILD_TYPE})")
+                            append("(${BuildConfig.GITHUB})")
+                        },
+                    ).build()
+                    .let(it::proceed)
+            }.build()
 
     private val authClient = client.newBuilder().addInterceptor(interceptor).build()
 
-    suspend fun addLibManga(track: Track, knownSeriesData: MangaBakaItem? = null, numberOfRereads: Int = 0): Track {
-        return withIOContext {
+    suspend fun addLibManga(
+        track: Track,
+        knownSeriesData: MangaBakaItem? = null,
+        numberOfRereads: Int = 0,
+    ): Track =
+        withIOContext {
             val seriesData = knownSeriesData ?: fetchSeriesData(track.remote_id)
             val resolvedId = seriesData.mergedWith ?: seriesData.id
             track.remote_id = resolvedId
-            val body = buildJsonObject {
-                put("is_private", track.private)
-                put("state", track.toApiStatus())
-                if (track.last_chapter_read > 0.0) {
-                    put("progress_chapter", track.last_chapter_read)
-                }
-                if (track.score > 0) {
-                    put("rating", track.score.toInt().coerceIn(0, 100))
-                }
-                if (track.started_reading_date > 0) {
-                    put("start_date", createDate(track.started_reading_date))
-                }
-                if (track.finished_reading_date > 0) {
-                    put("finish_date", createDate(track.finished_reading_date))
-                }
-                if (numberOfRereads > 0) {
-                    put("number_of_rereads", numberOfRereads)
-                }
-            }
-                .toString()
-                .toRequestBody()
+            val body =
+                buildJsonObject {
+                    put("is_private", track.private)
+                    put("state", track.toApiStatus())
+                    if (track.last_chapter_read > 0.0) {
+                        put("progress_chapter", track.last_chapter_read)
+                    }
+                    if (track.score > 0) {
+                        put("rating", track.score.toInt().coerceIn(0, 100))
+                    }
+                    if (track.started_reading_date > 0) {
+                        put("start_date", createDate(track.started_reading_date))
+                    }
+                    if (track.finished_reading_date > 0) {
+                        put("finish_date", createDate(track.finished_reading_date))
+                    }
+                    if (numberOfRereads > 0) {
+                        put("number_of_rereads", numberOfRereads)
+                    }
+                }.toString()
+                    .toRequestBody()
 
             authClient
                 .newCall(POST("$LIBRARY_API_URL/$resolvedId", body = body, headers = headersOf("Content-Type", APP_JSON)))
@@ -100,7 +107,6 @@ class MangaBakaApi(
             track.total_chapters = seriesData.totalChapters?.toIntOrNull() ?: 0
             track
         }
-    }
 
     suspend fun deleteLibManga(track: Track) {
         withIOContext {
@@ -118,31 +124,34 @@ class MangaBakaApi(
             try {
                 val originalId = track.remote_id
 
-                val (userData, seriesResult) = coroutineScope {
-                    async { fetchLibraryEntry(originalId) } to async { runCatching { fetchSeriesData(originalId) } }
-                }.let { (a, b) -> a.await() to b.await() }
+                val (userData, seriesResult) =
+                    coroutineScope {
+                        async { fetchLibraryEntry(originalId) } to async { runCatching { fetchSeriesData(originalId) } }
+                    }.let { (a, b) -> a.await() to b.await() }
 
-                val seriesData = seriesResult.getOrElse { e ->
-                    if (e is HttpException && e.code == 404) fetchSeriesData(resolveId(originalId)) else throw e
-                }
+                val seriesData =
+                    seriesResult.getOrElse { e ->
+                        if (e is HttpException && e.code == 404) fetchSeriesData(resolveId(originalId)) else throw e
+                    }
 
                 val resolvedId = seriesData.mergedWith ?: seriesData.id
 
                 if (userData == null) return@withIOContext null
 
-                val finalEntry = if (resolvedId != originalId) {
-                    val resolvedEntry = fetchLibraryEntry(resolvedId)
-                    val mergedEntry = userData.mergeWithResolved(resolvedEntry)
-                    val mergedTrack = mergedEntry.toTrack(resolvedId, seriesData)
-                    if (resolvedEntry == null) {
-                        addLibManga(mergedTrack, knownSeriesData = seriesData, numberOfRereads = mergedEntry.numberOfRereads ?: 0)
+                val finalEntry =
+                    if (resolvedId != originalId) {
+                        val resolvedEntry = fetchLibraryEntry(resolvedId)
+                        val mergedEntry = userData.mergeWithResolved(resolvedEntry)
+                        val mergedTrack = mergedEntry.toTrack(resolvedId, seriesData)
+                        if (resolvedEntry == null) {
+                            addLibManga(mergedTrack, knownSeriesData = seriesData, numberOfRereads = mergedEntry.numberOfRereads ?: 0)
+                        } else {
+                            updateLibManga(mergedTrack, knownSeriesData = seriesData, knownEntry = mergedEntry)
+                        }
+                        mergedEntry
                     } else {
-                        updateLibManga(mergedTrack, knownSeriesData = seriesData, knownEntry = mergedEntry)
+                        userData
                     }
-                    mergedEntry
-                } else {
-                    userData
-                }
 
                 finalEntry.toTrack(resolvedId, seriesData)
             } catch (e: HttpException) {
@@ -151,57 +160,70 @@ class MangaBakaApi(
         }
     }
 
-    suspend fun updateLibManga(track: Track, knownSeriesData: MangaBakaItem? = null, knownEntry: MangaBakaListEntry? = null): Track {
-        return withIOContext {
+    suspend fun updateLibManga(
+        track: Track,
+        knownSeriesData: MangaBakaItem? = null,
+        knownEntry: MangaBakaListEntry? = null,
+    ): Track =
+        withIOContext {
             val originalId = track.remote_id
 
-            val (seriesData, entry) = if (knownSeriesData != null && knownEntry != null) {
-                knownSeriesData to knownEntry
-            } else {
-                coroutineScope {
-                    val seriesDeferred = if (knownSeriesData != null) null else async { fetchSeriesData(originalId) }
-                    val entryDeferred = if (knownEntry != null) null else async { runCatching { fetchLibraryEntry(originalId) }.getOrNull() }
-                    (seriesDeferred?.await() ?: knownSeriesData!!) to (entryDeferred?.await() ?: knownEntry)
+            val (seriesData, entry) =
+                if (knownSeriesData != null && knownEntry != null) {
+                    knownSeriesData to knownEntry
+                } else {
+                    coroutineScope {
+                        val seriesDeferred = if (knownSeriesData != null) null else async { fetchSeriesData(originalId) }
+                        val entryDeferred =
+                            if (knownEntry !=
+                                null
+                            ) {
+                                null
+                            } else {
+                                async { runCatching { fetchLibraryEntry(originalId) }.getOrNull() }
+                            }
+                        (seriesDeferred?.await() ?: knownSeriesData!!) to (entryDeferred?.await() ?: knownEntry)
+                    }
                 }
-            }
 
             track.remote_id = seriesData.mergedWith ?: seriesData.id
 
-            val nextRereads = if (track.toApiStatus() == "completed" && entry?.state == "rereading") {
-                (entry.numberOfRereads ?: 0) + 1
-            } else {
-                entry?.numberOfRereads
-            }
+            val nextRereads =
+                if (track.toApiStatus() == "completed" && entry?.state == "rereading") {
+                    (entry.numberOfRereads ?: 0) + 1
+                } else {
+                    entry?.numberOfRereads
+                }
 
-            val body = buildJsonObject {
-                put("state", track.toApiStatus())
-                put("is_private", track.private)
-                if (track.last_chapter_read > 0.0) {
-                    put("progress_chapter", track.last_chapter_read)
-                } else {
-                    put("progress_chapter", null)
-                }
-                if (track.score > 0) {
-                    put("rating", track.score.toInt().coerceIn(0, 100))
-                } else {
-                    put("rating", null)
-                }
-                if (track.started_reading_date > 0) {
-                    put("start_date", createDate(track.started_reading_date))
-                } else {
-                    put("start_date", null)
-                }
-                if (track.finished_reading_date > 0) {
-                    put("finish_date", createDate(track.finished_reading_date))
-                } else {
-                    put("finish_date", null)
-                }
-                if (nextRereads != null) {
-                    put("number_of_rereads", nextRereads)
-                }
-            }
-                .toString()
-                .toRequestBody()
+            val body =
+                buildJsonObject {
+                    put("state", track.toApiStatus())
+                    put("is_private", track.private)
+                    if (track.last_chapter_read > 0.0) {
+                        put("progress_chapter", track.last_chapter_read)
+                    } else {
+                        put("progress_chapter", null)
+                    }
+                    if (track.score > 0) {
+                        put("rating", track.score.toInt().coerceIn(0, 100))
+                    } else {
+                        put("rating", null)
+                    }
+                    if (track.started_reading_date > 0) {
+                        put("start_date", createDate(track.started_reading_date))
+                    } else {
+                        put("start_date", null)
+                    }
+                    if (track.finished_reading_date > 0) {
+                        put("finish_date", createDate(track.finished_reading_date))
+                    } else {
+                        put("finish_date", null)
+                    }
+                    if (nextRereads != null) {
+                        put("number_of_rereads", nextRereads)
+                    }
+                }.toString()
+                    .toRequestBody()
 
             authClient
                 .newCall(PUT("$LIBRARY_API_URL/${track.remote_id}", body = body, headers = headersOf("Content-Type", APP_JSON)))
@@ -214,16 +236,19 @@ class MangaBakaApi(
             track.total_chapters = seriesData.totalChapters?.toIntOrNull() ?: 0
             track
         }
-    }
 
-    suspend fun search(search: String): List<TrackSearch> {
-        return withIOContext {
-            val url = "$API_BASE_URL/v1/series/search".toUri().buildUpon()
-                .appendQueryParameter("q", search)
-                .appendQueryParameter("type_not", "novel")
-                .build()
+    suspend fun search(search: String): List<TrackSearch> =
+        withIOContext {
+            val url =
+                "$API_BASE_URL/v1/series/search"
+                    .toUri()
+                    .buildUpon()
+                    .appendQueryParameter("q", search)
+                    .appendQueryParameter("type_not", "novel")
+                    .build()
             with(json) {
-                client.newCall(GET(url.toString()))
+                client
+                    .newCall(GET(url.toString()))
                     .awaitSuccess()
                     .parseAs<MangaBakaSearchResult>()
                     .data
@@ -231,59 +256,66 @@ class MangaBakaApi(
                     .map { parseSearchItem(it) }
             }
         }
-    }
 
-    private fun parseSearchItem(item: MangaBakaItem): TrackSearch {
-        return TrackSearch.create(trackId).apply {
+    private fun parseSearchItem(item: MangaBakaItem): TrackSearch =
+        TrackSearch.create(trackId).apply {
             remote_id = item.mergedWith ?: item.id
             title = item.title
-            summary = item.description.orEmpty().htmlDecode().trim()
-            score = item.rating?.toBigDecimal()?.setScale(2, RoundingMode.HALF_UP)?.toDouble() ?: -1.0
-            cover_url = item.cover.x350.x3.orEmpty()
+            summary = item.description.orEmpty().htmlDecode()
+            score = item.rating
+                ?.toBigDecimal()
+                ?.setScale(2, RoundingMode.HALF_UP)
+                ?.toDouble() ?: -1.0
+            cover_url =
+                item.cover.x350.x3
+                    .orEmpty()
             tracking_url = "$BASE_URL/${item.mergedWith ?: item.id}"
             total_chapters = item.totalChapters?.toIntOrNull() ?: 0
             start_date = item.published.startDate.orEmpty()
             publishing_status = item.status
-            publishing_type = item.type.replaceFirstChar { c ->
-                if (c.isLowerCase()) c.titlecase(Locale.getDefault()) else c.toString()
-            }
+            publishing_type = item.type.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase(Locale.getDefault()) else c.toString() }
             authors = item.authors.orEmpty()
             artists = item.artists.orEmpty()
         }
-    }
 
-    suspend fun getScoreStepSize(): Int {
-        return withIOContext {
+    suspend fun getScoreStepSize(): Int =
+        withIOContext {
             with(json) {
-                authClient.newCall(GET("$API_BASE_URL/v1/my/profile"))
+                authClient
+                    .newCall(GET("$API_BASE_URL/v1/my/profile"))
                     .awaitSuccess()
                     .parseAs<MangaBakaUserProfileResponse>()
                     .data
                     .ratingSteps
             }
         }
-    }
 
-    suspend fun getAccessToken(code: String): MangaBakaOAuth {
-        return withIOContext {
-            val formBody = FormBody.Builder()
-                .add("client_id", CLIENT_ID)
-                .add("code", code)
-                .add("code_verifier", codeVerifier)
-                .add("code_challenge_method", "S256")
-                .add("grant_type", "authorization_code")
-                .add("redirect_uri", REDIRECT_URI)
-                .add("scope", SCOPES)
-                .build()
+    suspend fun getAccessToken(code: String): MangaBakaOAuth =
+        withIOContext {
+            val formBody =
+                FormBody
+                    .Builder()
+                    .add("client_id", CLIENT_ID)
+                    .add("code", code)
+                    .add("code_verifier", codeVerifier)
+                    .add("code_challenge_method", "S256")
+                    .add("grant_type", "authorization_code")
+                    .add("redirect_uri", REDIRECT_URI)
+                    .add("scope", SCOPES)
+                    .build()
 
             with(json) {
-                client.newCall(POST("${OAUTH_URL}/token", body = formBody))
-                    .awaitSuccess().parseAs()
+                client
+                    .newCall(POST("${OAUTH_URL}/token", body = formBody))
+                    .awaitSuccess()
+                    .parseAs()
             }
         }
-    }
 
-    private data class CacheEntry<T>(val value: T, val cachedAt: Long = System.currentTimeMillis()) {
+    private data class CacheEntry<T>(
+        val value: T,
+        val cachedAt: Long = System.currentTimeMillis(),
+    ) {
         fun isExpired() = System.currentTimeMillis() - cachedAt > CACHE_TTL_MS
     }
 
@@ -297,39 +329,41 @@ class MangaBakaApi(
     private val seriesCache = lruCache<Long, CacheEntry<MangaBakaItem>>(MAX_CACHE_SIZE)
     private val libraryCache = lruCache<Long, CacheEntry<MangaBakaListEntry?>>(MAX_CACHE_SIZE)
 
-    suspend fun fetchSeriesData(seriesId: Long): MangaBakaItem {
-        return withIOContext {
+    suspend fun fetchSeriesData(seriesId: Long): MangaBakaItem =
+        withIOContext {
             seriesCache[seriesId]?.takeUnless { it.isExpired() }?.value ?: run {
-                val data = with(json) {
-                    authClient.newCall(GET("$API_BASE_URL/v1/series/$seriesId"))
-                        .awaitSuccess()
-                        .parseAs<MangaBakaItemResult>()
-                        .data
-                }
+                val data =
+                    with(json) {
+                        authClient
+                            .newCall(GET("$API_BASE_URL/v1/series/$seriesId"))
+                            .awaitSuccess()
+                            .parseAs<MangaBakaItemResult>()
+                            .data
+                    }
                 seriesCache[seriesId] = CacheEntry(data)
                 data
             }
         }
-    }
 
-    private suspend fun fetchLibraryEntry(seriesId: Long): MangaBakaListEntry? {
-        return withIOContext {
+    private suspend fun fetchLibraryEntry(seriesId: Long): MangaBakaListEntry? =
+        withIOContext {
             libraryCache[seriesId]?.takeUnless { it.isExpired() }?.value ?: run {
-                val entry = with(json) {
-                    try {
-                        authClient.newCall(GET("$LIBRARY_API_URL/$seriesId"))
-                            .awaitSuccess()
-                            .parseAs<MangaBakaListResult>()
-                            .data
-                    } catch (e: HttpException) {
-                        if (e.code == 404) null else throw e
+                val entry =
+                    with(json) {
+                        try {
+                            authClient
+                                .newCall(GET("$LIBRARY_API_URL/$seriesId"))
+                                .awaitSuccess()
+                                .parseAs<MangaBakaListResult>()
+                                .data
+                        } catch (e: HttpException) {
+                            if (e.code == 404) null else throw e
+                        }
                     }
-                }
                 libraryCache[seriesId] = CacheEntry(entry)
                 entry
             }
         }
-    }
 
     suspend fun resolveId(seriesId: Long): Long {
         val item = fetchSeriesData(seriesId)
@@ -380,24 +414,30 @@ class MangaBakaApi(
 
         private var codeVerifier: String = ""
 
-        fun authUrl(): Uri = "$OAUTH_URL/authorize".toUri().buildUpon()
-            .appendQueryParameter("client_id", CLIENT_ID)
-            .appendQueryParameter("code_challenge", getPkceS256ChallengeCode())
-            .appendQueryParameter("code_challenge_method", "S256")
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("scope", SCOPES)
-            .appendQueryParameter("redirect_uri", REDIRECT_URI)
-            .build()
+        fun authUrl(): Uri =
+            "$OAUTH_URL/authorize"
+                .toUri()
+                .buildUpon()
+                .appendQueryParameter("client_id", CLIENT_ID)
+                .appendQueryParameter("code_challenge", getPkceS256ChallengeCode())
+                .appendQueryParameter("code_challenge_method", "S256")
+                .appendQueryParameter("response_type", "code")
+                .appendQueryParameter("scope", SCOPES)
+                .appendQueryParameter("redirect_uri", REDIRECT_URI)
+                .build()
 
-        fun refreshTokenRequest(token: String) = POST(
-            "$OAUTH_URL/token",
-            body = FormBody.Builder()
-                .add("grant_type", "refresh_token")
-                .add("client_id", CLIENT_ID)
-                .add("refresh_token", token)
-                .add("redirect_uri", REDIRECT_URI)
-                .build(),
-        )
+        fun refreshTokenRequest(token: String) =
+            POST(
+                "$OAUTH_URL/token",
+                body =
+                    FormBody
+                        .Builder()
+                        .add("grant_type", "refresh_token")
+                        .add("client_id", CLIENT_ID)
+                        .add("refresh_token", token)
+                        .add("redirect_uri", REDIRECT_URI)
+                        .build(),
+            )
 
         private fun getPkceS256ChallengeCode(): String {
             // MangaBaka requires an actually conformant PKCE process, unlike MAL

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.RequestBody.Companion.toRequestBody
+import suwayomi.tachidesk.manga.impl.track.Track.htmlDecode
 import uy.kohesive.injekt.injectLazy
 
 class AniListMetadataProvider : MetadataProvider {
@@ -61,7 +62,7 @@ class AniListMetadataProvider : MetadataProvider {
                         ?.full,
                 coverUrl = media.coverImage?.large ?: media.coverImage?.medium,
                 year = media.startDate?.year,
-                description = media.description?.stripHtml(),
+                description = media.description?.htmlDecode() ?: "",
             )
         }
     }
@@ -103,7 +104,7 @@ class AniListMetadataProvider : MetadataProvider {
             title = media.title.userPreferred ?: media.title.romaji ?: media.title.english,
             author = author,
             artist = artist,
-            description = media.description?.stripHtml(),
+            description = media.description?.htmlDecode() ?: "",
             genre = media.genres?.takeIf { it.isNotEmpty() },
             status = mapStatus(media.status),
             coverUrl = media.coverImage?.extraLarge ?: media.coverImage?.large,
@@ -129,17 +130,6 @@ class AniListMetadataProvider : MetadataProvider {
             // UNKNOWN
             else -> 0
         }
-
-    private fun String.stripHtml(): String =
-        this
-            .replace(Regex("<br\\s*/?>"), "\n")
-            .replace(Regex("<[^>]*>"), "")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .trim()
 
     companion object {
         private const val API_URL = "https://graphql.anilist.co"

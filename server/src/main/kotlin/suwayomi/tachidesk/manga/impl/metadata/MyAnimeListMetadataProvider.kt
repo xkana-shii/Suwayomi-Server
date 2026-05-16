@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.Headers
 import suwayomi.tachidesk.manga.impl.track.tracker.myanimelist.dto.MALManga
 import uy.kohesive.injekt.injectLazy
 
@@ -31,10 +32,16 @@ class MyAnimeListMetadataProvider : MetadataProvider {
                 .toString()
 
         // NOTE: MyAnimeList API is OAuth-protected; without user auth headers this likely returns 401.
+        val headers =
+            Headers
+                .Builder()
+                .add("X-MAL-CLIENT-ID", CLIENT_ID)
+                .build()
+
         val response: MalSearchResponse =
             with(json) {
                 networkHelper.client
-                    .newCall(GET(url))
+                    .newCall(GET(url, headers))
                     .awaitSuccess()
                     .parseAs()
             }
@@ -79,9 +86,15 @@ class MyAnimeListMetadataProvider : MetadataProvider {
                 ).build()
                 .toString()
 
+        val headers =
+            Headers
+                .Builder()
+                .add("X-MAL-CLIENT-ID", CLIENT_ID)
+                .build()
+
         return with(json) {
             networkHelper.client
-                .newCall(GET(url))
+                .newCall(GET(url, headers))
                 .awaitSuccess()
                 .parseAs()
         }
@@ -91,9 +104,13 @@ class MyAnimeListMetadataProvider : MetadataProvider {
         when (status) {
             // MAL values are typically: "finished", "currently_publishing", "not_yet_published"
             "currently_publishing" -> 1
+
             "finished" -> 2
+
             "on_hiatus" -> 6
+
             "discontinued" -> 5
+
             else -> 0
         }
 }
@@ -114,3 +131,5 @@ data class MalSearchNode(
 data class MalSearchItem(
     val id: Int,
 )
+
+private const val CLIENT_ID = "3fda277931a4f9bc01fa4a715ce8b91d"

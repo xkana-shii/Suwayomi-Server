@@ -84,7 +84,9 @@ class MangaMutation {
                 MangaTable.update({ MangaTable.id inList ids }) { update ->
                     patch.inLibrary.also {
                         update[inLibrary] = it
-                        if (it) update[inLibraryAt] = Instant.now().epochSecond
+                        if (it) {
+                            update[inLibraryAt] = Instant.now().epochSecond
+                        }
                     }
                 }
             }
@@ -132,6 +134,17 @@ class MangaMutation {
         val manga: MangaType,
     )
 
+    data class ResetMangaMetadataToSourceInput(
+        val clientMutationId: String? = null,
+        val id: Int,
+        val resetCover: Boolean = true,
+    )
+
+    data class ResetMangaMetadataToSourcePayload(
+        val clientMutationId: String?,
+        val manga: MangaType,
+    )
+
     private val localMangaDetailsService = LocalMangaDetailsService()
 
     @RequireAuth
@@ -140,33 +153,103 @@ class MangaMutation {
 
         return future {
             // Step 1: Update database (skip if no fields to update)
-            val hasUpdates =
-                patch.title != null ||
-                    patch.author != null ||
-                    patch.artist != null ||
-                    patch.description != null ||
-                    patch.genre != null ||
-                    patch.status != null
-
-            if (hasUpdates) {
-                transaction {
-                    MangaTable.update({ MangaTable.id eq id }) { update ->
-                        patch.title?.let { update[title] = it }
-                        patch.author?.let { update[author] = it }
-                        patch.artist?.let { update[artist] = it }
-                        patch.description?.let { update[description] = it }
-                        patch.genre?.let { update[genre] = it.joinToString(", ") }
-                        patch.status?.let { update[status] = it.value }
-                    }
-                }
-            }
-
-            // Step 2: Write details.json for local source manga
             val row =
                 transaction {
                     MangaTable.selectAll().where { MangaTable.id eq id }.firstOrNull()
                         ?: throw IllegalArgumentException("Manga with id $id not found")
                 }
+
+            val metaUpdates = linkedMapOf<String, String>()
+            val metaDeletes = mutableListOf<String>()
+
+            if (patch.title != null) {
+                if (patch.title.isBlank()) {
+                    metaDeletes += Manga.OVERRIDE_TITLE_KEY
+                } else {
+                    metaUpdates[Manga.OVERRIDE_TITLE_KEY] = patch.title
+                }
+            }
+
+            if (patch.author != null) {
+                if (patch.author.isBlank()) {
+                    metaDeletes += Manga.OVERRIDE_AUTHOR_KEY
+                } else {
+                    metaUpdates[Manga.OVERRIDE_AUTHOR_KEY] = patch.author
+                }
+            }
+
+            if (patch.artist != null) {
+                if (patch.artist.isBlank()) {
+                    metaDeletes += Manga.OVERRIDE_ARTIST_KEY
+                } else {
+                    metaUpdates[Manga.OVERRIDE_ARTIST_KEY] = patch.artist
+                }
+            }
+
+            if (patch.description != null) {
+                if (patch.description.isBlank()) {
+                    metaDeletes += Manga.OVERRIDE_DESCRIPTION_KEY
+                } else {
+                    metaUpdates[Manga.OVERRIDE_DESCRIPTION_KEY] = patch.description
+                }
+            }
+
+            if (patch.genre != null || patch.status != null) {
+                metaUpdates[Manga.METADATA_MODE_KEY] = Manga.MODE_CUSTOM
+            }
+
+            val shouldUpdateTitle = patch.title != null && patch.title.isNotBlank()
+            val shouldUpdateAuthor = patch.author != null
+            val shouldUpdateArtist = patch.artist != null
+            val shouldUpdateDescription = patch.description != null
+            val shouldUpdateGenre = patch.genre != null
+            val shouldUpdateStatus = patch.status != null
+
+            val hasDbAssignments =
+                shouldUpdateTitle ||
+                    shouldUpdateAuthor ||
+                    shouldUpdateArtist ||
+                    shouldUpdateDescription ||
+                    shouldUpdateGenre ||
+                    shouldUpdateStatus
+
+            if (hasDbAssignments) {
+                transaction {
+                    MangaTable.update({ MangaTable.id eq id }) { update ->
+                        if (shouldUpdateTitle) {
+                            update[title] = patch.title!!
+                        }
+                        if (shouldUpdateAuthor) {
+                            update[author] = patch.author?.takeIf(String::isNotBlank)
+                        }
+                        if (shouldUpdateArtist) {
+                            update[artist] = patch.artist?.takeIf(String::isNotBlank)
+                        }
+                        if (shouldUpdateDescription) {
+                            update[description] = patch.description?.takeIf(String::isNotBlank)
+                        }
+                        if (shouldUpdateGenre) {
+                            update[genre] = patch.genre!!.joinToString(", ")
+                        }
+                        if (shouldUpdateStatus) {
+                            update[status] = patch.status!!.value
+                        }
+                    }
+                }
+            }
+
+            // Step 2: Write details.json for local source manga
+            if (metaUpdates.isNotEmpty()) {
+                Manga.modifyMangasMetas(mapOf(id to metaUpdates))
+            }
+
+            if (metaDeletes.isNotEmpty()) {
+                transaction {
+                    MangaMetaTable.deleteWhere {
+                        (MangaMetaTable.ref eq id) and (MangaMetaTable.key inList metaDeletes)
+                    }
+                }
+            }
 
             val sourceId = row[MangaTable.sourceReference]
             if (sourceId == LocalSource.ID) {
@@ -191,6 +274,8 @@ class MangaMutation {
             }
 
             // Step 3: Return updated manga
+            Manga.fetchManga(id)
+
             val manga =
                 transaction {
                     MangaType(MangaTable.selectAll().where { MangaTable.id eq id }.first())
@@ -204,6 +289,49 @@ class MangaMutation {
     }
 
     // --- Cover Image Upload ---
+    @RequireAuth
+    fun resetMangaMetadataToSource(input: ResetMangaMetadataToSourceInput): CompletableFuture<ResetMangaMetadataToSourcePayload?> {
+        val (clientMutationId, id, resetCover) = input
+
+        return future {
+            val keysToDelete =
+                mutableListOf(
+                    Manga.METADATA_MODE_KEY,
+                    Manga.METADATA_PROVIDER_KEY,
+                    Manga.METADATA_EXTERNAL_ID_KEY,
+                    Manga.OVERRIDE_TITLE_KEY,
+                    Manga.OVERRIDE_AUTHOR_KEY,
+                    Manga.OVERRIDE_ARTIST_KEY,
+                    Manga.OVERRIDE_DESCRIPTION_KEY,
+                ).apply {
+                    if (resetCover) {
+                        add(Manga.COVER_MODE_KEY)
+                    }
+                }
+
+            transaction {
+                MangaMetaTable.deleteWhere {
+                    (MangaMetaTable.ref eq id) and (MangaMetaTable.key inList keysToDelete)
+                }
+            }
+
+            if (resetCover) {
+                Manga.clearThumbnail(id)
+            }
+
+            Manga.fetchManga(id)
+
+            val manga =
+                transaction {
+                    MangaType(MangaTable.selectAll().where { MangaTable.id eq id }.first())
+                }
+
+            ResetMangaMetadataToSourcePayload(
+                clientMutationId = clientMutationId,
+                manga = manga,
+            )
+        }
+    }
 
     data class UploadMangaCoverInput(
         val clientMutationId: String? = null,
@@ -243,6 +371,15 @@ class MangaMutation {
                     update[thumbnailUrlLastFetched] = System.currentTimeMillis()
                 }
             }
+
+            Manga.modifyMangasMetas(
+                mapOf(
+                    id to
+                        mapOf(
+                            Manga.COVER_MODE_KEY to Manga.MODE_CUSTOM,
+                        ),
+                ),
+            )
 
             val sourceId = row[MangaTable.sourceReference]
             if (sourceId == LocalSource.ID) {

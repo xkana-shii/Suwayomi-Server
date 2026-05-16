@@ -9,16 +9,15 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
 
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
-import kotlin.math.max
-import kotlin.system.measureTimeMillis
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.statements.BatchUpdateStatement
 import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.insertAndGetId
@@ -39,10 +38,19 @@ import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrack
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrackRecordDataClass
 import suwayomi.tachidesk.manga.model.dataclass.TrackRecordDataClass
-import suwayomi.tachidesk.manga.model.table.*
+import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
+import suwayomi.tachidesk.manga.model.table.CategoryTable
+import suwayomi.tachidesk.manga.model.table.ChapterMetaTable
+import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.MangaMetaTable
+import suwayomi.tachidesk.manga.model.table.MangaStatus
+import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.TrackRecordTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
 import suwayomi.tachidesk.server.database.dbTransaction
 import java.util.Date
+import kotlin.math.max
+import kotlin.system.measureTimeMillis
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import suwayomi.tachidesk.manga.impl.track.Track as Tracker
@@ -60,22 +68,22 @@ object BackupMangaHandler {
         var flags = 0L
         // UNREAD
         when (meta["webUI_unread"]) {
-            "true"  -> flags = flags or 0x00000002L
+            "true" -> flags = flags or 0x00000002L
             "false" -> flags = flags or 0x00000004L
         }
         // DOWNLOADED
         when (meta["webUI_downloaded"]) {
-            "true"  -> flags = flags or 0x00000008L
+            "true" -> flags = flags or 0x00000008L
             "false" -> flags = flags or 0x00000010L
         }
         // BOOKMARKED
         when (meta["webUI_bookmarked"]) {
-            "true"  -> flags = flags or 0x00000020L
+            "true" -> flags = flags or 0x00000020L
             "false" -> flags = flags or 0x00000040L
         }
         // FILLERMARKED
         when (meta["webUI_fillermarked"]) {
-            "true"  -> flags = flags or 0x00000080L
+            "true" -> flags = flags or 0x00000080L
             "false" -> flags = flags or 0x00000100L
         }
         return flags
@@ -114,7 +122,10 @@ object BackupMangaHandler {
      * The optional progress callback is invoked per-manga during assembly:
      *   progress(currentIndex, totalMangaCount, title)
      */
-    fun backup(flags: BackupFlags, progress: ((Int, Int, String) -> Unit)? = null): List<BackupManga> {
+    fun backup(
+        flags: BackupFlags,
+        progress: ((Int, Int, String) -> Unit)? = null,
+    ): List<BackupManga> {
         if (!flags.includeManga) {
             return emptyList()
         }
@@ -130,217 +141,226 @@ object BackupMangaHandler {
 
         logger.info { "backup: starting bulk prefetch (flags=$flags)" }
         val t0 = System.currentTimeMillis()
-        val prefetched = dbTransaction {
-            val mangaRows: List<ResultRow>
-            val mangaFetchMs = measureTimeMillis {
-                mangaRows = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
-            }
-
-            val mangaIds = mangaRows.map { it[MangaTable.id].value }
-
-            val mangaMetaByMangaId: Map<Int, Map<String, String>>
-            val mangaMetaFetchMs = measureTimeMillis {
-                mangaMetaByMangaId =
-                    if (flags.includeClientData && mangaIds.isNotEmpty()) {
-                        MangaMetaTable
-                            .selectAll()
-                            .where { MangaMetaTable.ref inList mangaIds }
-                            .groupBy { it[MangaMetaTable.ref].value }
-                            .mapValues { (_, rows) -> rows.associate { it[MangaMetaTable.key] to it[MangaMetaTable.value] } }
-                            .withDefault { emptyMap() }
-                    } else {
-                        emptyMap()
+        val prefetched =
+            dbTransaction {
+                val mangaRows: List<ResultRow>
+                val mangaFetchMs =
+                    measureTimeMillis {
+                        mangaRows = MangaTable.selectAll().where { MangaTable.inLibrary eq true }.toList()
                     }
-            }
 
-            val chaptersList: List<suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass>
-            val chaptersFetchMs = measureTimeMillis {
-                chaptersList =
-                    if ((flags.includeChapters || flags.includeHistory) && mangaIds.isNotEmpty()) {
-                        ChapterTable
-                            .selectAll()
-                            .where { ChapterTable.manga inList mangaIds }
-                            .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
-                            .map { ChapterTable.toDataClass(it) }
-                    } else {
-                        emptyList()
+                val mangaIds = mangaRows.map { it[MangaTable.id].value }
+
+                val mangaMetaByMangaId: Map<Int, Map<String, String>>
+                val mangaMetaFetchMs =
+                    measureTimeMillis {
+                        mangaMetaByMangaId =
+                            if (flags.includeClientData && mangaIds.isNotEmpty()) {
+                                MangaMetaTable
+                                    .selectAll()
+                                    .where { MangaMetaTable.ref inList mangaIds }
+                                    .groupBy { it[MangaMetaTable.ref].value }
+                                    .mapValues { (_, rows) -> rows.associate { it[MangaMetaTable.key] to it[MangaMetaTable.value] } }
+                                    .withDefault { emptyMap() }
+                            } else {
+                                emptyMap()
+                            }
                     }
-            }
-            val chaptersByMangaId = if (chaptersList.isNotEmpty()) chaptersList.groupBy { it.mangaId } else emptyMap()
 
-            val chapterMetaByChapterId: Map<Int, Map<String, String>>
-            val chapterMetaFetchMs = measureTimeMillis {
-                chapterMetaByChapterId =
-                    if (flags.includeClientData && chaptersList.isNotEmpty()) {
-                        val chapterIds = chaptersList.map { it.id }
-                        ChapterMetaTable
-                            .selectAll()
-                            .where { ChapterMetaTable.ref inList chapterIds }
-                            .groupBy { it[ChapterMetaTable.ref].value }
-                            .mapValues { (_, rows) -> rows.associate { it[ChapterMetaTable.key] to it[MangaMetaTable.value] } }
-                            .withDefault { emptyMap() }
-                    } else {
-                        emptyMap()
+                val chaptersList: List<suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass>
+                val chaptersFetchMs =
+                    measureTimeMillis {
+                        chaptersList =
+                            if ((flags.includeChapters || flags.includeHistory) && mangaIds.isNotEmpty()) {
+                                ChapterTable
+                                    .selectAll()
+                                    .where { ChapterTable.manga inList mangaIds }
+                                    .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
+                                    .map { ChapterTable.toDataClass(it) }
+                            } else {
+                                emptyList()
+                            }
                     }
-            }
+                val chaptersByMangaId = if (chaptersList.isNotEmpty()) chaptersList.groupBy { it.mangaId } else emptyMap()
 
-            val categoriesByMangaId: Map<Int, List<Int>>
-            val categoriesFetchMs = measureTimeMillis {
-                categoriesByMangaId =
-                    if (flags.includeCategories && mangaIds.isNotEmpty()) {
-                        CategoryMangaTable
-                            .innerJoin(CategoryTable)
-                            .selectAll()
-                            .where { CategoryMangaTable.manga inList mangaIds }
-                            .orderBy(CategoryTable.order to SortOrder.ASC)
-                            .groupBy({ it[CategoryMangaTable.manga].value }, { CategoryTable.toDataClass(it).order })
-                    } else {
-                        emptyMap()
+                val chapterMetaByChapterId: Map<Int, Map<String, String>>
+                val chapterMetaFetchMs =
+                    measureTimeMillis {
+                        chapterMetaByChapterId =
+                            if (flags.includeClientData && chaptersList.isNotEmpty()) {
+                                val chapterIds = chaptersList.map { it.id }
+                                ChapterMetaTable
+                                    .selectAll()
+                                    .where { ChapterMetaTable.ref inList chapterIds }
+                                    .groupBy { it[ChapterMetaTable.ref].value }
+                                    .mapValues { (_, rows) -> rows.associate { it[ChapterMetaTable.key] to it[MangaMetaTable.value] } }
+                                    .withDefault { emptyMap() }
+                            } else {
+                                emptyMap()
+                            }
                     }
-            }
 
-            val tracksByMangaId: Map<Int, List<TrackRecordDataClass>>
-            val tracksFetchMs = measureTimeMillis {
-                tracksByMangaId =
-                    if (flags.includeTracking && mangaIds.isNotEmpty()) {
-                        TrackRecordTable
-                            .selectAll()
-                            .where { TrackRecordTable.mangaId inList mangaIds }
-                            .map { it.toTrackRecordDataClass() }
-                            .groupBy { it.mangaId }
-                    } else {
-                        emptyMap()
+                val categoriesByMangaId: Map<Int, List<Int>>
+                val categoriesFetchMs =
+                    measureTimeMillis {
+                        categoriesByMangaId =
+                            if (flags.includeCategories && mangaIds.isNotEmpty()) {
+                                CategoryMangaTable
+                                    .innerJoin(CategoryTable)
+                                    .selectAll()
+                                    .where { CategoryMangaTable.manga inList mangaIds }
+                                    .orderBy(CategoryTable.order to SortOrder.ASC)
+                                    .groupBy({ it[CategoryMangaTable.manga].value }, { CategoryTable.toDataClass(it).order })
+                            } else {
+                                emptyMap()
+                            }
                     }
-            }
 
-            logger.info {
-                "backup: prefetch breakdown — " +
-                    "manga=${mangaFetchMs}ms(${mangaRows.size}), " +
-                    "mangaMeta=${mangaMetaFetchMs}ms, " +
-                    "chapters=${chaptersFetchMs}ms(${chaptersList.size}), " +
-                    "chapterMeta=${chapterMetaFetchMs}ms, " +
-                    "categories=${categoriesFetchMs}ms, " +
-                    "tracks=${tracksFetchMs}ms"
-            }
+                val tracksByMangaId: Map<Int, List<TrackRecordDataClass>>
+                val tracksFetchMs =
+                    measureTimeMillis {
+                        tracksByMangaId =
+                            if (flags.includeTracking && mangaIds.isNotEmpty()) {
+                                TrackRecordTable
+                                    .selectAll()
+                                    .where { TrackRecordTable.mangaId inList mangaIds }
+                                    .map { it.toTrackRecordDataClass() }
+                                    .groupBy { it.mangaId }
+                            } else {
+                                emptyMap()
+                            }
+                    }
 
-            Prefetched(
-                mangaRows = mangaRows,
-                mangaMetaByMangaId = mangaMetaByMangaId,
-                chaptersByMangaId = chaptersByMangaId,
-                chapterMetaByChapterId = chapterMetaByChapterId,
-                categoriesByMangaId = categoriesByMangaId,
-                tracksByMangaId = tracksByMangaId,
-            )
-        }
+                logger.info {
+                    "backup: prefetch breakdown — " +
+                        "manga=${mangaFetchMs}ms(${mangaRows.size}), " +
+                        "mangaMeta=${mangaMetaFetchMs}ms, " +
+                        "chapters=${chaptersFetchMs}ms(${chaptersList.size}), " +
+                        "chapterMeta=${chapterMetaFetchMs}ms, " +
+                        "categories=${categoriesFetchMs}ms, " +
+                        "tracks=${tracksFetchMs}ms"
+                }
+
+                Prefetched(
+                    mangaRows = mangaRows,
+                    mangaMetaByMangaId = mangaMetaByMangaId,
+                    chaptersByMangaId = chaptersByMangaId,
+                    chapterMetaByChapterId = chapterMetaByChapterId,
+                    categoriesByMangaId = categoriesByMangaId,
+                    tracksByMangaId = tracksByMangaId,
+                )
+            }
         logger.info { "backup: prefetch done in ${System.currentTimeMillis() - t0}ms (${prefetched.mangaRows.size} manga)" }
 
         val t1 = System.currentTimeMillis()
         val total = prefetched.mangaRows.size
-        return prefetched.mangaRows.mapIndexed { index, mangaRow ->
-            val mangaId = mangaRow[MangaTable.id].value
+        return prefetched.mangaRows
+            .mapIndexed { index, mangaRow ->
+                val mangaId = mangaRow[MangaTable.id].value
 
-            var meta = prefetched.mangaMetaByMangaId[mangaId] ?: emptyMap()
-            var excludedScanlators: List<String> = emptyList()
-            meta["webUI_excludedScanlators"]?.let { jsonStr ->
-                try {
-                    excludedScanlators = json.decodeFromString(ListSerializer(String.serializer()), jsonStr)
-                } catch (_: Exception) {}
-                meta = meta - "webUI_excludedScanlators"
-            }
-            val chapterFlags = chapterFlagsFromMeta(meta)
-            meta = meta - listOf("webUI_unread", "webUI_bookmarked", "webUI_downloaded", "webUI_fillermarked")
+                var meta = prefetched.mangaMetaByMangaId[mangaId] ?: emptyMap()
+                var excludedScanlators: List<String> = emptyList()
+                meta["webUI_excludedScanlators"]?.let { jsonStr ->
+                    try {
+                        excludedScanlators = json.decodeFromString(ListSerializer(String.serializer()), jsonStr)
+                    } catch (_: Exception) {
+                    }
+                    meta = meta - "webUI_excludedScanlators"
+                }
+                val chapterFlags = chapterFlagsFromMeta(meta)
+                meta = meta - listOf("webUI_unread", "webUI_bookmarked", "webUI_downloaded", "webUI_fillermarked")
 
-            val backupManga =
-                BackupManga(
-                    source = mangaRow[MangaTable.sourceReference],
-                    url = mangaRow[MangaTable.url],
-                    title = mangaRow[MangaTable.title],
-                    artist = mangaRow[MangaTable.artist],
-                    author = mangaRow[MangaTable.author],
-                    description = mangaRow[MangaTable.description],
-                    genre = mangaRow[MangaTable.genre]?.split(", ") ?: emptyList(),
-                    status = MangaStatus.valueOf(mangaRow[MangaTable.status]).value,
-                    thumbnailUrl = mangaRow[MangaTable.thumbnail_url],
-                    dateAdded = mangaRow[MangaTable.inLibraryAt].seconds.inWholeMilliseconds,
-                    viewer = 0,
-                    updateStrategy = UpdateStrategy.valueOf(mangaRow[MangaTable.updateStrategy]),
-                    excludedScanlators = excludedScanlators,
-                    chapterFlags = chapterFlags.toInt(),
-                    meta = meta
-                )
+                val backupManga =
+                    BackupManga(
+                        source = mangaRow[MangaTable.sourceReference],
+                        url = mangaRow[MangaTable.url],
+                        title = mangaRow[MangaTable.title],
+                        artist = mangaRow[MangaTable.artist],
+                        author = mangaRow[MangaTable.author],
+                        description = mangaRow[MangaTable.description],
+                        genre = mangaRow[MangaTable.genre]?.split(", ") ?: emptyList(),
+                        status = MangaStatus.valueOf(mangaRow[MangaTable.status]).value,
+                        thumbnailUrl = mangaRow[MangaTable.thumbnail_url],
+                        dateAdded = mangaRow[MangaTable.inLibraryAt].seconds.inWholeMilliseconds,
+                        viewer = 0,
+                        updateStrategy = UpdateStrategy.valueOf(mangaRow[MangaTable.updateStrategy]),
+                        excludedScanlators = excludedScanlators,
+                        chapterFlags = chapterFlags.toInt(),
+                        meta = meta,
+                    )
 
-            if (flags.includeChapters || flags.includeHistory) {
-                val chapters = prefetched.chaptersByMangaId[mangaId].orEmpty()
-                if (flags.includeChapters) {
-                    val chapterToMeta = prefetched.chapterMetaByChapterId
-                    backupManga.chapters =
-                        chapters.map {
-                            BackupChapter(
-                                it.url,
-                                it.name,
-                                it.scanlator,
-                                it.read,
-                                it.bookmarked,
-                                it.fillermarked,
-                                it.lastPageRead,
-                                it.fetchedAt.seconds.inWholeMilliseconds,
-                                it.uploadDate,
-                                it.chapterNumber,
-                                chapters.size - it.index,
-                            ).apply {
-                                if (flags.includeClientData) {
-                                    this.meta = chapterToMeta[it.id] ?: emptyMap()
+                if (flags.includeChapters || flags.includeHistory) {
+                    val chapters = prefetched.chaptersByMangaId[mangaId].orEmpty()
+                    if (flags.includeChapters) {
+                        val chapterToMeta = prefetched.chapterMetaByChapterId
+                        backupManga.chapters =
+                            chapters.map {
+                                BackupChapter(
+                                    it.url,
+                                    it.name,
+                                    it.scanlator,
+                                    it.read,
+                                    it.bookmarked,
+                                    it.fillermarked,
+                                    it.lastPageRead,
+                                    it.fetchedAt.seconds.inWholeMilliseconds,
+                                    it.uploadDate,
+                                    it.chapterNumber,
+                                    chapters.size - it.index,
+                                ).apply {
+                                    if (flags.includeClientData) {
+                                        this.meta = chapterToMeta[it.id] ?: emptyMap()
+                                    }
                                 }
                             }
-                        }
-                }
-                if (flags.includeHistory) {
-                    backupManga.history =
-                        chapters.mapNotNull {
-                            if (it.lastReadAt > 0) {
-                                BackupHistory(
-                                    url = it.url,
-                                    lastRead = it.lastReadAt.seconds.inWholeMilliseconds,
-                                )
-                            } else {
-                                null
-                            }
-                        }
-                }
-            }
-
-            if (flags.includeCategories) {
-                backupManga.categories = prefetched.categoriesByMangaId[mangaId] ?: emptyList()
-            }
-
-            if (flags.includeTracking) {
-                val records = prefetched.tracksByMangaId[mangaId].orEmpty()
-                val tracks =
-                    records.map { rec ->
-                        BackupTracking(
-                            syncId = rec.trackerId,
-                            libraryId = rec.libraryId ?: 0,
-                            mediaId = rec.remoteId,
-                            title = rec.title,
-                            lastChapterRead = rec.lastChapterRead.toFloat(),
-                            totalChapters = rec.totalChapters,
-                            score = rec.score.toFloat(),
-                            status = rec.status,
-                            startedReadingDate = rec.startDate,
-                            finishedReadingDate = rec.finishDate,
-                            trackingUrl = rec.remoteUrl,
-                            private = rec.private,
-                        )
                     }
-                if (tracks.isNotEmpty()) {
-                    backupManga.tracking = tracks
+                    if (flags.includeHistory) {
+                        backupManga.history =
+                            chapters.mapNotNull {
+                                if (it.lastReadAt > 0) {
+                                    BackupHistory(
+                                        url = it.url,
+                                        lastRead = it.lastReadAt.seconds.inWholeMilliseconds,
+                                    )
+                                } else {
+                                    null
+                                }
+                            }
+                    }
                 }
-            }
 
-            progress?.invoke(index + 1, total, backupManga.title)
+                if (flags.includeCategories) {
+                    backupManga.categories = prefetched.categoriesByMangaId[mangaId] ?: emptyList()
+                }
 
-            backupManga
-        }.also { logger.info { "backup: assembly done in ${System.currentTimeMillis() - t1}ms" } }
+                if (flags.includeTracking) {
+                    val records = prefetched.tracksByMangaId[mangaId].orEmpty()
+                    val tracks =
+                        records.map { rec ->
+                            BackupTracking(
+                                syncId = rec.trackerId,
+                                libraryId = rec.libraryId ?: 0,
+                                mediaId = rec.remoteId,
+                                title = rec.title,
+                                lastChapterRead = rec.lastChapterRead.toFloat(),
+                                totalChapters = rec.totalChapters,
+                                score = rec.score.toFloat(),
+                                status = rec.status,
+                                startedReadingDate = rec.startDate,
+                                finishedReadingDate = rec.finishDate,
+                                trackingUrl = rec.remoteUrl,
+                                private = rec.private,
+                            )
+                        }
+                    if (tracks.isNotEmpty()) {
+                        backupManga.tracking = tracks
+                    }
+                }
+
+                progress?.invoke(index + 1, total, backupManga.title)
+
+                backupManga
+            }.also { logger.info { "backup: assembly done in ${System.currentTimeMillis() - t1}ms" } }
     }
 
     fun restore(
@@ -433,7 +453,8 @@ object BackupMangaHandler {
 
                 val mutableMeta = manga.meta.toMutableMap()
                 if (manga.excludedScanlators.isNotEmpty()) {
-                    mutableMeta["webUI_excludedScanlators"] = json.encodeToString(ListSerializer(String.serializer()), manga.excludedScanlators)
+                    mutableMeta["webUI_excludedScanlators"] =
+                        json.encodeToString(ListSerializer(String.serializer()), manga.excludedScanlators)
                 }
                 metaFromChapterFlags(manga.chapterFlags.toLong()).forEach { (k, v) -> mutableMeta[k] = v }
                 metaFromChapterFlags(manga.chapterFlags.toLong()).forEach { (k, v) -> mutableMeta[k] = v }
@@ -591,8 +612,7 @@ object BackupMangaHandler {
 
                     val dbTrack =
                         dbTrackRecordsByTrackerId[backupTrack.syncId]
-                            ?:
-                            return@mapNotNull track
+                            ?: return@mapNotNull track
 
                     if (track.toTrackRecordDataClass().forComparison() == dbTrack.toTrackRecordDataClass().forComparison()) {
                         return@mapNotNull null

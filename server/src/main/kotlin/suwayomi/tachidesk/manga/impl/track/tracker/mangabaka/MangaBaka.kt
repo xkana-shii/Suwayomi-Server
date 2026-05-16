@@ -10,8 +10,10 @@ import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
 import java.io.IOException
 
-class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
-
+class MangaBaka(
+    id: Int,
+) : Tracker(id, "MangaBaka"),
+    DeletableTracker {
     private val json: Json by injectLazy()
 
     private val interceptor by lazy { MangaBakaInterceptor(this) }
@@ -24,20 +26,19 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
     override fun getLogo(): String = "/static/tracker/manga_baka.png"
 
-    override fun getStatusList(): List<Int> {
-        return listOf(READING, COMPLETED, PAUSED, DROPPED, PLAN_TO_READ, REREADING, CONSIDERING)
-    }
+    override fun getStatusList(): List<Int> = listOf(READING, COMPLETED, PAUSED, DROPPED, PLAN_TO_READ, REREADING, CONSIDERING)
 
-    override fun getStatus(status: Int): String? = when (status) {
-        CONSIDERING -> "Considering"
-        COMPLETED -> "Completed"
-        DROPPED -> "Dropped"
-        PAUSED -> "Paused"
-        PLAN_TO_READ -> "Plan to read"
-        READING -> "Reading"
-        REREADING -> "Rereading"
-        else -> null
-    }
+    override fun getStatus(status: Int): String? =
+        when (status) {
+            CONSIDERING -> "Considering"
+            COMPLETED -> "Completed"
+            DROPPED -> "Dropped"
+            PAUSED -> "Paused"
+            PLAN_TO_READ -> "Plan to read"
+            READING -> "Reading"
+            REREADING -> "Rereading"
+            else -> null
+        }
 
     override fun getReadingStatus(): Int = READING
 
@@ -45,21 +46,25 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
     override fun getCompletionStatus(): Int = COMPLETED
 
-    override fun getScoreList(): List<String> {
-        return when (trackPreferences.getScoreType(this)) {
+    override fun getScoreList(): List<String> =
+        when (trackPreferences.getScoreType(this)) {
             // 1, 2, ..., 99, 100
             STEP_1 -> IntRange(0, 100).map(Int::toString)
+
             // 5, 10, ..., 95, 100
             STEP_5 -> IntRange(0, 100).step(5).map(Int::toString)
+
             // 10, 20, ..., 90, 100
             STEP_10 -> IntRange(0, 100).step(10).map(Int::toString)
+
             // 20, 40, ..., 80, 100
             STEP_20 -> IntRange(0, 100).step(20).map(Int::toString)
+
             // 25, 50, 75, 100
             STEP_25 -> IntRange(0, 100).step(25).map(Int::toString)
+
             else -> throw Exception("Unknown score type")
         }
-    }
 
     override fun displayScore(track: Track): String = track.score.toInt().toString()
 
@@ -73,7 +78,9 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
 
         if (track.status != COMPLETED && didReadChapter) {
             val mangaItem = api.fetchSeriesData(track.remote_id)
-            if (track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters && (mangaItem.status == "completed" || mangaItem.status == "cancelled")) {
+            if (track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters &&
+                (mangaItem.status == "completed" || mangaItem.status == "cancelled")
+            ) {
                 track.status = COMPLETED
                 track.finished_reading_date = System.currentTimeMillis()
             } else if (track.status != REREADING) {
@@ -132,10 +139,15 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
-        val normalized = TRACKER_PATTERNS
-            .firstNotNullOfOrNull { (tracker, prefix) ->
-                tracker.find(query)?.groupValues?.get(1)?.let { "$prefix$it" }
-            } ?: query
+        val normalized =
+            TRACKER_PATTERNS
+                .firstNotNullOfOrNull { (tracker, prefix) ->
+                    tracker
+                        .find(query)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.let { "$prefix$it" }
+                } ?: query
 
         return api.search(normalized)
     }
@@ -174,21 +186,25 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
         login(code)
     }
 
-    override suspend fun login(username: String, password: String) = login(password)
+    override suspend fun login(
+        username: String,
+        password: String,
+    ) = login(password)
 
     suspend fun login(code: String) {
         try {
             val oauth = api.getAccessToken(code)
             interceptor.setAuth(oauth)
             saveCredentials("user", oauth.accessToken)
-            val scoreType = when (val scoreStep = api.getScoreStepSize()) {
-                1 -> STEP_1
-                5 -> STEP_5
-                10 -> STEP_10
-                20 -> STEP_20
-                25 -> STEP_25
-                else -> throw Exception("Unknown score step size $scoreStep")
-            }
+            val scoreType =
+                when (val scoreStep = api.getScoreStepSize()) {
+                    1 -> STEP_1
+                    5 -> STEP_5
+                    10 -> STEP_10
+                    20 -> STEP_20
+                    25 -> STEP_25
+                    else -> throw Exception("Unknown score step size $scoreStep")
+                }
             trackPreferences.setScoreType(this, scoreType)
         } catch (_: Exception) {
             logout()
@@ -199,13 +215,12 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
         trackPreferences.setTrackToken(this, json.encodeToString(oauth))
     }
 
-    fun restoreToken(): MangaBakaOAuth? {
-        return try {
+    fun restoreToken(): MangaBakaOAuth? =
+        try {
             json.decodeFromString<MangaBakaOAuth>(trackPreferences.getTrackToken(this)!!)
         } catch (_: Exception) {
             null
         }
-    }
 
     override fun logout() {
         super.logout()
@@ -238,10 +253,11 @@ class MangaBaka(id: Int) : Tracker(id, "MangaBaka"), DeletableTracker {
         const val STEP_20 = "STEP_20"
         const val STEP_25 = "STEP_25"
 
-        private val TRACKER_PATTERNS = listOf(
-            Regex("""myanimelist\.net/manga/(\d+)""") to "mal:",
-            Regex("""mangaupdates\.com/series/([^/?#]+)""") to "mu:",
-            Regex("""anilist\.co/manga/(\d+)""") to "al:",
-        )
+        private val TRACKER_PATTERNS =
+            listOf(
+                Regex("""myanimelist\.net/manga/(\d+)""") to "mal:",
+                Regex("""mangaupdates\.com/series/([^/?#]+)""") to "mu:",
+                Regex("""anilist\.co/manga/(\d+)""") to "al:",
+            )
     }
 }

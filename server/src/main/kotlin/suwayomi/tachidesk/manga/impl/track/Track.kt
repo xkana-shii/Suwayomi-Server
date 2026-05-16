@@ -502,5 +502,5 @@ object Track {
         val private: Boolean? = null,
     )
 
-    fun String.htmlDecode(): String = Jsoup.parse(this).wholeText()
+    fun String.htmlDecode(): String = Jsoup.parse(this).wholeText().trim()
 }
