@@ -141,16 +141,41 @@ main() {
 }
 
 move_release_to_output_dir() {
-   # clean up from possible previous runs
-   if [ -f "$OUTPUT_DIR/$RELEASE" ]; then
-     rm "$OUTPUT_DIR/$RELEASE"
-   fi
-   mv "$RELEASE" "$OUTPUT_DIR/"
+  # Ensure the release artifact exists before moving
+  if [ ! -f "$RELEASE" ]; then
+    error $LINENO "Release file $RELEASE not found; previous steps likely failed"
+  fi
+
+  # clean up from possible previous runs
+  if [ -f "$OUTPUT_DIR/$RELEASE" ]; then
+    rm "$OUTPUT_DIR/$RELEASE"
+  fi
+  mv "$RELEASE" "$OUTPUT_DIR/"
 }
 
 download_launcher() {
-  LAUNCHER_URL=$(curl -s "https://api.github.com/repos/xkana-shii/Suwayomi-Launcher/releases/latest" | grep "browser_download_url" | grep ".jar" | head -n 1 | cut -d '"' -f 4)
-  curl -L "$LAUNCHER_URL" -o "Suwayomi-Launcher.jar"
+  local api_url="https://api.github.com/repos/xkana-shii/Suwayomi-Launcher/releases/latest"
+  local auth_args=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth_args+=(-H "Authorization: token $GITHUB_TOKEN")
+  fi
+
+  # Try to discover a .jar asset URL
+  LAUNCHER_URL=$(curl -s "${auth_args[@]}" "$api_url" \
+    | grep "browser_download_url" | grep -E "\.jar(\")?$" | head -n 1 | cut -d '"' -f 4 || true)
+
+  if [ -z "$LAUNCHER_URL" ]; then
+    error $LINENO "Could not find Suwayomi-Launcher .jar download URL from $api_url"
+  fi
+
+  # Download, retrying on transient network failures, and fail on HTTP error
+  curl -fL --retry 3 --retry-delay 5 "$LAUNCHER_URL" -o "Suwayomi-Launcher.jar" \
+    || error $LINENO "Failed to download Suwayomi-Launcher.jar from $LAUNCHER_URL"
+
+  if [ ! -f "Suwayomi-Launcher.jar" ]; then
+    error $LINENO "Download succeeded but Suwayomi-Launcher.jar is missing"
+  fi
+
   mv "Suwayomi-Launcher.jar" "$RELEASE_NAME/Suwayomi-Launcher.jar"
 }
 
