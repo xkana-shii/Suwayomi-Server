@@ -4,12 +4,22 @@ package suwayomi.tachidesk.graphql.mutations
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.UpdateState.DOWNLOADING
 import suwayomi.tachidesk.graphql.types.UpdateState.ERROR
 import suwayomi.tachidesk.graphql.types.UpdateState.IDLE
 import suwayomi.tachidesk.graphql.types.WebUIFlavor
 import suwayomi.tachidesk.graphql.types.WebUIUpdateStatus
+import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.util.ExitCode
 import suwayomi.tachidesk.server.util.WebInterfaceManager
@@ -33,6 +43,17 @@ class InfoMutation {
     )
 
     data class ShutdownServerPayload(
+        val clientMutationId: String?,
+        val success: Boolean,
+    )
+
+    data class ClearDatabaseInput(
+        val clientMutationId: String? = null,
+        val keepReadManga: Boolean? = true,
+        val sourceIds: List<Int>? = null,
+    )
+
+    data class ClearDatabasePayload(
         val clientMutationId: String?,
         val success: Boolean,
     )
@@ -98,5 +119,53 @@ class InfoMutation {
                 clientMutationId = input.clientMutationId,
                 success = true,
             )
+        }
+
+    @RequireAuth
+    fun clearDatabase(input: ClearDatabaseInput): CompletableFuture<ClearDatabasePayload?> =
+        future {
+            val keepRead = input.keepReadManga ?: true
+            val sourceIds = input.sourceIds?.map { it.toLong() } ?: emptyList()
+
+            transaction {
+                val candidateIds =
+                    if (sourceIds.isEmpty()) {
+                        MangaTable
+                            .selectAll()
+                            .where { MangaTable.inLibrary eq false }
+                            .map { it[MangaTable.id].value }
+                    } else {
+                        MangaTable
+                            .selectAll()
+                            .where { (MangaTable.inLibrary eq false) and (MangaTable.sourceReference inList sourceIds) }
+                            .map { it[MangaTable.id].value }
+                    }
+
+                if (candidateIds.isEmpty()) {
+                    return@transaction
+                }
+
+                val idsToDelete =
+                    if (keepRead) {
+                        val idsWithRead =
+                            ChapterTable
+                                .selectAll()
+                                .where { (ChapterTable.isRead eq true) or (ChapterTable.lastPageRead neq 0) }
+                                .map { it[ChapterTable.manga].value }
+                                .toSet()
+
+                        candidateIds.filterNot { it in idsWithRead }
+                    } else {
+                        candidateIds
+                    }
+
+                if (idsToDelete.isEmpty()) {
+                    return@transaction
+                }
+
+                MangaTable.deleteWhere { MangaTable.id inList idsToDelete }
+            }
+
+            ClearDatabasePayload(clientMutationId = input.clientMutationId, success = true)
         }
 }
