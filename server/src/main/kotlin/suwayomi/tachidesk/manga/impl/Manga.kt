@@ -135,12 +135,8 @@ object Manga {
                     } catch (_: UninitializedPropertyAccessException) {
                         ""
                     }
-
-                val resolvedTitle =
-                    overrideTitle ?: remoteTitle.ifEmpty { mangaEntry[MangaTable.title] }
-
-                if (resolvedTitle.isNotEmpty() && resolvedTitle != mangaEntry[MangaTable.title]) {
-                    val canUpdateTitle = updateMangaDownloadDir(mangaId, resolvedTitle)
+                if (remoteTitle.isNotEmpty() && remoteTitle != mangaEntry[MangaTable.title]) {
+                    val canUpdateTitle = updateMangaDownloadDir(mangaEntry[MangaTable.title], source.toString(), remoteTitle)
 
                     if (canUpdateTitle) {
                         it[MangaTable.title] = resolvedTitle

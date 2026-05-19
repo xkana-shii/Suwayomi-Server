@@ -23,6 +23,7 @@ import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.security.MessageDigest
 import kotlin.math.max
 
@@ -34,7 +35,11 @@ private val logger = KotlinLogging.logger { }
  * Truncate a string safely to a maximum number of bytes in UTF-8,
  * preserving valid codepoint boundaries.
  */
-private fun truncateToBytes(s: String, maxBytes: Int, charset: Charset = StandardCharsets.UTF_8): String {
+private fun truncateToBytes(
+    s: String,
+    maxBytes: Int,
+    charset: Charset = StandardCharsets.UTF_8,
+): String {
     val bytes = s.toByteArray(charset)
     if (bytes.size <= maxBytes) return s
 
@@ -57,14 +62,22 @@ private fun md5Hex(input: String): String {
     return digest.joinToString("") { "%02x".format(it) }
 }
 
+private fun getMangaDir(
+    title: String,
+    sourceName: String,
+): String {
+    val sourceDir = SafePath.buildValidFilename(sourceName)
+    val mangaDir = SafePath.buildValidFilename(title)
+
+    return "$sourceDir/$mangaDir"
+}
+
 private fun getMangaDir(mangaId: Int): String =
     transaction {
         val mangaEntry = MangaTable.selectAll().where { MangaTable.id eq mangaId }.first()
         val source = GetCatalogueSource.getCatalogueSourceOrStub(mangaEntry[MangaTable.sourceReference])
 
-        val sourceDir = SafePath.buildValidFilename(source.toString())
-        val mangaDir = SafePath.buildValidFilename(mangaEntry[MangaTable.title])
-        "$sourceDir/$mangaDir"
+        getMangaDir(mangaEntry[MangaTable.title], source.toString())
     }
 
 /**
@@ -83,10 +96,11 @@ private fun getChapterDir(
         val chapterEntry = ChapterTable.selectAll().where { ChapterTable.id eq chapterId }.first()
 
         // Build base name (scanlator prefix if present)
-        val base = when {
-            chapterEntry[ChapterTable.scanlator] != null -> "${chapterEntry[ChapterTable.scanlator]}_${chapterEntry[ChapterTable.name]}"
-            else -> chapterEntry[ChapterTable.name]
-        }
+        val base =
+            when {
+                chapterEntry[ChapterTable.scanlator] != null -> "${chapterEntry[ChapterTable.scanlator]}_${chapterEntry[ChapterTable.name]}"
+                else -> chapterEntry[ChapterTable.name]
+            }
 
         // Sanitize base name first
         val sanitizedBase = SafePath.buildValidFilename(base)
@@ -101,11 +115,12 @@ private fun getChapterDir(
 
         // Compute disambiguator from chapter URL if present, else fallback to chapterId
         val url = chapterEntry[ChapterTable.url]
-        val disambiguator = if (!url.isNullOrBlank()) {
-            md5Hex(url).take(6)
-        } else {
-            chapterId.toString()
-        }
+        val disambiguator =
+            if (!url.isNullOrBlank()) {
+                md5Hex(url).take(6)
+            } else {
+                chapterId.toString()
+            }
 
         val chapterDirName = "${truncatedBase}_$disambiguator"
         // Final sanitize just in case
@@ -118,7 +133,10 @@ private fun getChapterDir(
  * Return a list of candidate (possibly-existing) relative download paths for a chapter within the manga folder.
  * First element is the canonical hashed name (current format). Next element is the legacy name without hash.
  */
-fun getCandidateChapterDownloadPathsRelative(mangaId: Int, chapterId: Int): List<String> =
+fun getCandidateChapterDownloadPathsRelative(
+    mangaId: Int,
+    chapterId: Int,
+): List<String> =
     transaction {
         val chapterEntry = ChapterTable.selectAll().where { ChapterTable.id eq chapterId }.first()
         val name = chapterEntry[ChapterTable.name]
@@ -143,7 +161,10 @@ fun getCandidateChapterDownloadPathsRelative(mangaId: Int, chapterId: Int): List
 /**
  * Resolve first existing folder among candidates and return absolute path, else null.
  */
-fun resolveExistingChapterDownloadFolder(mangaId: Int, chapterId: Int): String? {
+fun resolveExistingChapterDownloadFolder(
+    mangaId: Int,
+    chapterId: Int,
+): String? {
     val candidates = getCandidateChapterDownloadPathsRelative(mangaId, chapterId)
     for (rel in candidates) {
         val f = File(applicationDirs.mangaDownloadsRoot, rel)
@@ -155,7 +176,10 @@ fun resolveExistingChapterDownloadFolder(mangaId: Int, chapterId: Int): String? 
 /**
  * Resolve first existing CBZ among candidates and return absolute path, else null.
  */
-fun resolveExistingChapterCbzPath(mangaId: Int, chapterId: Int): String? {
+fun resolveExistingChapterCbzPath(
+    mangaId: Int,
+    chapterId: Int,
+): String? {
     val candidates = getCandidateChapterDownloadPathsRelative(mangaId, chapterId)
     for (rel in candidates) {
         val f = File(applicationDirs.mangaDownloadsRoot, "$rel.cbz")
@@ -166,7 +190,17 @@ fun resolveExistingChapterCbzPath(mangaId: Int, chapterId: Int): String? {
 
 fun getThumbnailDownloadPath(mangaId: Int): String = applicationDirs.thumbnailDownloadsRoot + "/$mangaId"
 
+fun getMangaDownloadDir(
+    title: String,
+    sourceName: String,
+): String = applicationDirs.mangaDownloadsRoot + "/" + getMangaDir(title, sourceName)
+
 fun getMangaDownloadDir(mangaId: Int): String = applicationDirs.mangaDownloadsRoot + "/" + getMangaDir(mangaId)
+
+fun getMangaCacheDir(
+    title: String,
+    sourceName: String,
+): String = applicationDirs.tempMangaCacheRoot + "/" + getMangaDir(title, sourceName)
 
 fun getChapterDownloadPath(
     mangaId: Int,
@@ -183,35 +217,53 @@ fun getChapterCachePath(
     chapterId: Int,
 ): String = applicationDirs.tempMangaCacheRoot + "/" + getChapterDir(mangaId, chapterId)
 
-/** return value says if rename/move was successful */
-fun updateMangaDownloadDir(
-    mangaId: Int,
-    newTitle: String,
+private fun updateDownloadDir(
+    currentDir: String,
+    newDir: String,
 ): Boolean {
-    // Get current manga directory (uses its own transaction)
-    val currentMangaDir = getMangaDir(mangaId)
+    val currentDirFile = File(currentDir)
+    val newDirFile = File(newDir)
 
-    // Build new directory path
-    val newMangaDir =
-        transaction {
-            val mangaEntry = MangaTable.selectAll().where { MangaTable.id eq mangaId }.first()
-            val source = GetCatalogueSource.getCatalogueSourceOrStub(mangaEntry[MangaTable.sourceReference])
-            val sourceDir = SafePath.buildValidFilename(source.toString())
-            val newMangaDirName = SafePath.buildValidFilename(newTitle)
-            "$sourceDir/$newMangaDirName"
-        }
+    if (!currentDirFile.exists()) {
+        return true
+    }
 
-    val oldPath = File(applicationDirs.mangaDownloadsRoot, currentMangaDir)
-    val newPath = File(applicationDirs.mangaDownloadsRoot, newMangaDir)
     return try {
-        if (oldPath.exists()) {
-            java.nio.file.Files.move(oldPath.toPath(), newPath.toPath())
-            true
-        } else {
-            true
+        Files.move(currentDirFile.toPath(), newDirFile.toPath())
+
+        if (currentDirFile.exists()) {
+            return false
         }
+
+        if (!newDirFile.exists()) {
+            return false
+        }
+
+        return true
     } catch (e: Exception) {
-        logger.error(e) { "updateMangaDownloadDir: failed to rename manga download folder from \"$oldPath\" to \"$newPath\"" }
+        logger.error(e) { "updateDownloadDir: failed to rename download folder from \"$currentDir\" to \"$newDir\"" }
         false
     }
+}
+
+/** return value says if rename/move was successful */
+fun updateMangaDownloadDir(
+    title: String,
+    sourceName: String,
+    newTitle: String,
+): Boolean {
+    val currentDownloadDir = getMangaDownloadDir(title, sourceName)
+    val newDownloadDir = getMangaDownloadDir(newTitle, sourceName)
+
+    val renamed = updateDownloadDir(currentDownloadDir, newDownloadDir)
+
+    val tryToKeepCachedFilesUsable = renamed
+    if (tryToKeepCachedFilesUsable) {
+        val currentCacheDir = getMangaCacheDir(title, sourceName)
+        val newCacheDir = getMangaCacheDir(newTitle, sourceName)
+
+        updateDownloadDir(currentCacheDir, newCacheDir)
+    }
+
+    return renamed
 }

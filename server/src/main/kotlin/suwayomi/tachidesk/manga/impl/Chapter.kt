@@ -238,7 +238,7 @@ object Chapter {
                 val deletedReadChapterNumbers = TreeSet<Float>()
                 val deletedBookmarkedChapterNumbers = TreeSet<Float>()
                 val deletedFillermarkedChapterNumbers = TreeSet<Float>()
-                val deletedDownloadedChapterNumberInfoMap = mutableMapOf<Float, MutableMap<String?, Int>>()
+                val deletedDownloadedChapterNumberToChapter = mutableMapOf<Float, ChapterDataClass>()
                 val deletedChapterNumberDateFetchMap = mutableMapOf<Float, Long>()
 
                 // clear any orphaned/duplicate chapters that are in the db but not in `chapterList`
@@ -250,13 +250,7 @@ object Chapter {
                             if (dbChapter.read) deletedReadChapterNumbers.add(dbChapter.chapterNumber)
                             if (dbChapter.bookmarked) deletedBookmarkedChapterNumbers.add(dbChapter.chapterNumber)
                             if (dbChapter.fillermarked) deletedFillermarkedChapterNumbers.add(dbChapter.chapterNumber)
-                            if (dbChapter.downloaded) {
-                                val pageCountByScanlator =
-                                    deletedDownloadedChapterNumberInfoMap.getOrPut(
-                                        dbChapter.chapterNumber,
-                                    ) { mutableMapOf() }
-                                pageCountByScanlator[dbChapter.scanlator] = dbChapter.pageCount
-                            }
+                            if (dbChapter.downloaded) deletedDownloadedChapterNumberToChapter[dbChapter.chapterNumber] = dbChapter
                             deletedChapterNumbers.add(dbChapter.chapterNumber)
                             deletedChapterNumberDateFetchMap[dbChapter.chapterNumber] = dbChapter.fetchedAt
                             dbChapter.id
@@ -298,18 +292,23 @@ object Chapter {
                                     this[ChapterTable.isBookmarked] = chapter.chapterNumber in deletedBookmarkedChapterNumbers
                                     this[ChapterTable.isFillermarked] = chapter.chapterNumber in deletedFillermarkedChapterNumbers
 
-
-                                    // only preserve download status for chapters of the same scanlator, otherwise,
-                                    // the downloaded files won't be found anyway
-                                    val downloadedChapterInfo = deletedDownloadedChapterNumberInfoMap[chapter.chapterNumber]
-                                    val pageCount = downloadedChapterInfo?.get(chapter.scanlator)
-                                    if (pageCount != null) {
-                                        this[ChapterTable.isDownloaded] = true
-                                        this[ChapterTable.pageCount] = pageCount
-                                    }
                                     // Try to use the fetch date of the original entry to not pollute 'Updates' tab
                                     deletedChapterNumberDateFetchMap[chapter.chapterNumber]?.let {
                                         this[ChapterTable.fetchedAt] = it
+                                    }
+
+                                    val deletedChapter = deletedDownloadedChapterNumberToChapter[chapter.chapterNumber]!!
+
+                                    val hasDownloadedPages = deletedChapter.pageCount > 0
+                                    val isSameName = deletedChapter.name == chapter.name
+                                    val isSameScanlator = deletedChapter.scanlator == chapter.scanlator
+
+                                    // Only preserve download status for chapters with the same name and of the same scanlator; otherwise,
+                                    // the downloaded files won't be found anyway
+                                    val isDownloadPreservable = hasDownloadedPages && isSameName && isSameScanlator
+                                    if (isDownloadPreservable) {
+                                        this[ChapterTable.isDownloaded] = true
+                                        this[ChapterTable.pageCount] = deletedChapter.pageCount
                                     }
                                 }
                             }.forEach { insertedChapters.add(ChapterTable.toDataClass(it)) }
@@ -320,12 +319,30 @@ object Chapter {
                             .apply {
                                 chaptersToUpdate.forEach {
                                     addBatch(EntityID(it.id, ChapterTable))
+
+                                    val currentChapter = chaptersInDb.find { dbChapter -> dbChapter.id == it.id }!!
+
                                     this[ChapterTable.name] = it.name
                                     this[ChapterTable.date_upload] = it.uploadDate
                                     this[ChapterTable.chapter_number] = it.chapterNumber
                                     this[ChapterTable.scanlator] = it.scanlator
                                     this[ChapterTable.sourceOrder] = it.index
                                     this[ChapterTable.realUrl] = it.realUrl
+                                    this[ChapterTable.isDownloaded] = currentChapter.downloaded
+                                    this[ChapterTable.pageCount] = currentChapter.pageCount
+
+                                    if (!currentChapter.downloaded) {
+                                        return@forEach
+                                    }
+
+                                    val isSameScanlator = currentChapter.scanlator == it.scanlator
+                                    val isSameName = currentChapter.name == it.name
+
+                                    val isDownloadPreservable = isSameName && isSameScanlator
+                                    if (!isDownloadPreservable) {
+                                        this[ChapterTable.isDownloaded] = false
+                                        this[ChapterTable.pageCount] = -1
+                                    }
                                 }
                             }.toExecutable()
                             .execute(this@transaction)
