@@ -78,6 +78,9 @@ class SourceType(
     fun extension(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ExtensionType> =
         dataFetchingEnvironment.getValueFromDataLoader<Long, ExtensionType>("ExtensionForSourceDataLoader", id)
 
+    fun nonLibraryCount(dataFetchingEnvironment: DataFetchingEnvironment): java.util.concurrent.CompletableFuture<Int> =
+        dataFetchingEnvironment.getValueFromDataLoader<Long, Int>("NonLibraryCountForSourceDataLoader", id)
+
     fun preferences(): List<Preference> = getSourcePreferencesRaw(id).map { preferenceOf(it) }
 
     fun filters(): List<Filter> = getCatalogueSourceOrStub(id).getFilterList().map { filterOf(it) }

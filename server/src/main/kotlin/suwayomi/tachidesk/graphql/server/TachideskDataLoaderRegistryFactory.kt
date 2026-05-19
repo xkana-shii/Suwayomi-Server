@@ -35,6 +35,7 @@ import suwayomi.tachidesk.graphql.dataLoaders.MangaForCategoryDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaForIdsDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaForSourceDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaMetaDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.NonLibraryCountForSourceDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourceDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourceMetaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourcesForExtensionDataLoader
@@ -76,6 +77,7 @@ class TachideskDataLoaderRegistryFactory {
                 CategoryMetaDataLoader(),
                 CategoriesForMangaDataLoader(),
                 SourceDataLoader(),
+                NonLibraryCountForSourceDataLoader(),
                 SourcesForExtensionDataLoader(),
                 SourceMetaDataLoader(),
                 ExtensionDataLoader(),
