@@ -50,7 +50,7 @@ class InfoMutation {
     data class ClearDatabaseInput(
         val clientMutationId: String? = null,
         val keepReadManga: Boolean? = true,
-        val sourceIds: List<Int>? = null,
+        val sourceIds: List<Long>? = null,
     )
 
     data class ClearDatabasePayload(
@@ -125,7 +125,8 @@ class InfoMutation {
     fun clearDatabase(input: ClearDatabaseInput): CompletableFuture<ClearDatabasePayload?> =
         future {
             val keepRead = input.keepReadManga ?: true
-            val sourceIds = input.sourceIds?.map { it.toLong() } ?: emptyList()
+
+            val sourceIds: List<Long> = input.sourceIds ?: emptyList()
 
             transaction {
                 val candidateIds =
