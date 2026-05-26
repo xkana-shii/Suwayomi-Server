@@ -384,7 +384,7 @@ error() {
   if [ -z "$message" ]; then
       echo "$0: line $parent_lineno: exiting with status $code"
   else
-      echo "$0: line $parent_lineno: $message: exiting with status $code"
+      echo "$0: line $parent_lineno $message exiting with status $code"
   fi
   exit "$code"
 }
