@@ -4,6 +4,8 @@ setlocal EnableExtensions
 set "REPO_OWNER=xkana-shii"
 set "REPO_NAME=Suwayomi-Launcher"
 set "LAUNCHER_JAR=Suwayomi-Launcher.jar"
+set "SERVER_DIR=bin"
+set "SERVER_JAR=%SERVER_DIR%\Suwayomi-Server.jar"
 
 cd /d "%~dp0" || exit /b 1
 
@@ -11,6 +13,20 @@ if not exist "jre\bin\javaw.exe" (
   echo ERROR: JRE not found at jre\bin\javaw.exe
   exit /b 1
 )
+
+REM --- Ensure bin\Suwayomi-Server.jar exists, using a versioned jar if necessary ---
+if not exist "%SERVER_JAR%" (
+  for %%f in ("%SERVER_DIR%\Suwayomi-Server-*.jar") do (
+    if /I not "%%~nxf"=="Suwayomi-Server.jar" (
+      copy "%%f" "%SERVER_JAR%" >nul
+      del /q "%SERVER_DIR%\Suwayomi-Server-*.jar"
+      goto :found_server_jar
+    )
+  )
+  echo ERROR: Could not find %SERVER_JAR% or any versioned Suwayomi-Server-*.jar in %SERVER_DIR%
+  exit /b 1
+)
+:found_server_jar
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^

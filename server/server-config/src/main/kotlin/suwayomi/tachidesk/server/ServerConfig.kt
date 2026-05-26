@@ -702,8 +702,12 @@ class ServerConfig(
                 replaceWith = "MOVE TO PREFERENCES",
                 message = "Moved to preference store. User is supposed to use a login/logout mutation",
                 migrateConfig = { value, config ->
-                    val koreaderPreferences = application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
-                    koreaderPreferences.edit().putString("server_address", value.unwrapped() as? String).apply()
+                    val koreaderPreferences =
+                        application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
+                    koreaderPreferences
+                        .edit()
+                        .putString("server_address", value.unwrapped() as? String)
+                        .apply()
 
                     config
                 },
@@ -721,8 +725,12 @@ class ServerConfig(
                 replaceWith = "MOVE TO PREFERENCES",
                 message = "Moved to preference store. User is supposed to use a login/logout mutation",
                 migrateConfig = { value, config ->
-                    val koreaderPreferences = application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
-                    koreaderPreferences.edit().putString("username", value.unwrapped() as? String).apply()
+                    val koreaderPreferences =
+                        application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
+                    koreaderPreferences
+                        .edit()
+                        .putString("username", value.unwrapped() as? String)
+                        .apply()
 
                     config
                 },
@@ -740,8 +748,12 @@ class ServerConfig(
                 replaceWith = "MOVE TO PREFERENCES",
                 message = "Moved to preference store. User is supposed to use a login/logout mutation",
                 migrateConfig = { value, config ->
-                    val koreaderPreferences = application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
-                    koreaderPreferences.edit().putString("user_key", value.unwrapped() as? String).apply()
+                    val koreaderPreferences =
+                        application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
+                    koreaderPreferences
+                        .edit()
+                        .putString("user_key", value.unwrapped() as? String)
+                        .apply()
 
                     config
                 },
@@ -759,8 +771,12 @@ class ServerConfig(
                 replaceWith = "MOVE TO PREFERENCES",
                 message = "Moved to preference store. Is supposed to be random and gets auto generated",
                 migrateConfig = { value, config ->
-                    val koreaderPreferences = application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
-                    koreaderPreferences.edit().putString("device_id", value.unwrapped() as? String).apply()
+                    val koreaderPreferences =
+                        application.getSharedPreferences("koreader_sync", Context.MODE_PRIVATE)
+                    koreaderPreferences
+                        .edit()
+                        .putString("device_id", value.unwrapped() as? String)
+                        .apply()
 
                     config
                 },
@@ -806,9 +822,13 @@ class ServerConfig(
 
                     if (forward != null && backward != null) {
                         config
-                            .withValue("server.koreaderSyncStrategyForward", forward.toConfig("internal").getValue("internal"))
-                            .withValue("server.koreaderSyncStrategyBackward", backward.toConfig("internal").getValue("internal"))
-                            .withoutPath("server.koreaderSyncStrategy")
+                            .withValue(
+                                "server.koreaderSyncStrategyForward",
+                                forward.toConfig("internal").getValue("internal"),
+                            ).withValue(
+                                "server.koreaderSyncStrategyBackward",
+                                backward.toConfig("internal").getValue("internal"),
+                            ).withoutPath("server.koreaderSyncStrategy")
                     } else {
                         config
                     }
@@ -832,8 +852,10 @@ class ServerConfig(
                 }
 
                 KoreaderSyncLegacyStrategy.SILENT -> {
-                    koreaderSyncStrategyForward.value = KoreaderSyncConflictStrategy.KEEP_REMOTE // Remote is newer
-                    koreaderSyncStrategyBackward.value = KoreaderSyncConflictStrategy.KEEP_LOCAL // Local is newer
+                    koreaderSyncStrategyForward.value =
+                        KoreaderSyncConflictStrategy.KEEP_REMOTE // Remote is newer
+                    koreaderSyncStrategyBackward.value =
+                        KoreaderSyncConflictStrategy.KEEP_LOCAL // Local is newer
                 }
 
                 KoreaderSyncLegacyStrategy.SEND -> {
@@ -1045,6 +1067,14 @@ class ServerConfig(
         description = "How many page downloads (within a single chapter) can run in parallel.",
     )
 
+    val serverUpdateChannel: MutableStateFlow<String> by StringSetting(
+        protoNumber = 88, // use the next available protoNumber
+        group = SettingGroup.MISC, // or create a new group if desired
+        privacySafe = true,
+        defaultValue = "stable",
+        description = "The channel used for server updates (e.g. 'stable', 'beta', etc.)",
+    )
+
     /** ****************************************************************** **/
     /**                                                                    **/
     /**                          Renamed settings                          **/
@@ -1097,8 +1127,15 @@ class ServerConfig(
                 flow
             }
 
-        val sharedFlow = MutableSharedFlow<T>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-        actualFlow.distinctUntilChanged().mapLatest { sharedFlow.emit(it) }.launchIn(mutableConfigValueScope)
+        val sharedFlow =
+            MutableSharedFlow<T>(
+                extraBufferCapacity = 1,
+                onBufferOverflow = BufferOverflow.DROP_OLDEST,
+            )
+        actualFlow
+            .distinctUntilChanged()
+            .mapLatest { sharedFlow.emit(it) }
+            .launchIn(mutableConfigValueScope)
         sharedFlow.onEach { onChange(it) }.launchIn(mutableConfigValueScope)
     }
 
