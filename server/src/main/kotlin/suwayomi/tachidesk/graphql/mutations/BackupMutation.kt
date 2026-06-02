@@ -24,9 +24,11 @@ import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupValidator
 import suwayomi.tachidesk.manga.impl.backup.proto.models.Backup
 import suwayomi.tachidesk.manga.impl.extension.Extension
 import suwayomi.tachidesk.manga.impl.extension.ExtensionsList
+import suwayomi.tachidesk.manga.impl.extension.github.ExtensionGithubApi
+import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
-import suwayomi.tachidesk.manga.model.table.SourceTable
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.serverConfig
 import java.util.concurrent.CompletableFuture
 import kotlin.time.Duration.Companion.seconds
 
@@ -120,17 +122,28 @@ class BackupMutation {
 
             ExtensionsList.fetchExtensions()
 
-            val missingSourceIds = missingSources.map { it.id }
+            val missingSourceIds = missingSources.map { it.id }.toSet()
 
-            val matchedExtensionPkgNames =
-                transaction {
-                    ExtensionTable
-                        .innerJoin(SourceTable)
-                        .selectAll()
-                        .where { SourceTable.id inList missingSourceIds }
-                        .map { it[ExtensionTable.pkgName] }
-                        .distinct()
-                }
+            val onlineExtensions =
+                serverConfig.extensionRepos.value
+                    .map { repo ->
+                        kotlin.runCatching {
+                            ExtensionGithubApi.findExtensions(repo.repoUrlReplace())
+                        }
+                    }.mapNotNull { it.getOrNull() }
+                    .flatten()
+
+            val matchedExtensionsByPkgName =
+                onlineExtensions
+                    .asSequence()
+                    .filter { onlineExtension ->
+                        onlineExtension.sources.any { source -> source.id in missingSourceIds }
+                    }.groupBy { it.pkgName }
+                    .mapValues { (_, extensionsForPkg) ->
+                        extensionsForPkg.maxBy { it.versionCode }
+                    }
+
+            val matchedExtensionPkgNames = matchedExtensionsByPkgName.keys.toList()
 
             matchedExtensionPkgNames.forEach { pkgName ->
                 Extension.installExtension(pkgName)
@@ -148,18 +161,16 @@ class BackupMutation {
                     }
                 }
 
-            val installedSourceIds =
-                transaction {
-                    SourceTable
-                        .selectAll()
-                        .where { SourceTable.id inList missingSourceIds }
-                        .map { it[SourceTable.id].value }
-                        .toSet()
-                }
+            val matchedSourceIds =
+                matchedExtensionsByPkgName
+                    .values
+                    .flatMap(OnlineExtension::sources)
+                    .map { it.id }
+                    .toSet()
 
             val unmatchedSources =
                 missingSources
-                    .filterNot { it.id in installedSourceIds }
+                    .filterNot { it.id in matchedSourceIds }
                     .map { InstallMissingExtensionsFromBackupSource(it.id, it.name) }
 
             InstallMissingExtensionsFromBackupPayload(
@@ -285,3 +296,15 @@ class BackupMutation {
         }
     }
 }
+
+private fun String.repoUrlReplace(): String =
+    if (contains("github")) {
+        replace(Regex("""https://github\.com/([^/]+)/([^/]+)(?:/tree/([^/]+))?(?:/(.+))?""")) {
+            "https://raw.githubusercontent.com/${it.groupValues[1]}/${it.groupValues[2]}/" +
+                (it.groupValues.getOrNull(3)?.ifBlank { null } ?: "repo") +
+                "/" +
+                (it.groupValues.getOrNull(4)?.ifBlank { null } ?: "index.min.json")
+        }
+    } else {
+        this
+    }
