@@ -20,12 +20,17 @@ import suwayomi.tachidesk.manga.model.table.SourceTable
 import java.io.InputStream
 
 object ProtoBackupValidator {
+    data class MissingSource(
+        val id: Long,
+        val name: String,
+    )
+
     data class ValidationResult(
         val missingSources: List<String>,
         val missingTrackers: List<String>,
         val mangasMissingSources: List<String>,
         @JsonIgnore
-        val missingSourceIds: List<Pair<Long, String>>,
+        val missingSourceIds: List<MissingSource>,
     )
 
     fun validate(backup: Backup): ValidationResult {
@@ -33,7 +38,13 @@ object ProtoBackupValidator {
 
         val missingSources =
             transaction {
-                sources.filter { SourceTable.selectAll().where { SourceTable.id eq it.key }.firstOrNull() == null }
+                sources
+                    .filter {
+                        SourceTable
+                            .selectAll()
+                            .where { SourceTable.id eq it.key }
+                            .firstOrNull() == null
+                    }.map { MissingSource(it.key, it.value) }
             }
 
         val trackers =
@@ -51,11 +62,11 @@ object ProtoBackupValidator {
 
         return ValidationResult(
             missingSources
-                .map { "${it.value} (${it.key})" }
+                .map { "${it.name} (${it.id})" }
                 .sorted(),
             missingTrackers,
             emptyList(),
-            missingSources.toList(),
+            missingSources,
         )
     }
 
