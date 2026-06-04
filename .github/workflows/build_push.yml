@@ -134,6 +134,7 @@ jobs:
         run: |
           mkdir upload
           tar -xvpf scripts.tar.gz
+          chmod +x scripts/bundler.sh
           scripts/bundler.sh -o upload/ windows-x64
 
       - name: Upload ${{ matrix.name }} release
