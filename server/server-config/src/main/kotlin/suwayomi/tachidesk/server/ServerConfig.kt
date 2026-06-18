@@ -1075,7 +1075,7 @@ class ServerConfig(
     )
 
     val maxPagesInParallel: MutableStateFlow<Int> by IntSetting(
-        protoNumber = 87,
+        protoNumber = 500,
         group = SettingGroup.DOWNLOADER,
         privacySafe = true,
         defaultValue = 10,
@@ -1085,8 +1085,8 @@ class ServerConfig(
     )
 
     val serverUpdateChannel: MutableStateFlow<String> by StringSetting(
-        protoNumber = 88, // use the next available protoNumber
-        group = SettingGroup.MISC, // or create a new group if desired
+        protoNumber = 501,
+        group = SettingGroup.MISC,
         privacySafe = true,
         defaultValue = "stable",
         description = "The channel used for server updates (e.g. 'stable', 'beta', etc.)",
