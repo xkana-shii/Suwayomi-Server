@@ -150,7 +150,7 @@ class MangaMutation {
     data class ResetMangaMetadataToSourceInput(
         val clientMutationId: String? = null,
         val id: Int,
-        val resetCover: Boolean = true,
+        val resetCover: Boolean? = null,
     )
 
     data class ResetMangaMetadataToSourcePayload(
@@ -314,7 +314,9 @@ class MangaMutation {
         userId: Int,
         input: ResetMangaMetadataToSourceInput,
     ): CompletableFuture<ResetMangaMetadataToSourcePayload?> {
-        val (clientMutationId, id, resetCover) = input
+        val clientMutationId = input.clientMutationId
+        val id = input.id
+        val resetCover = input.resetCover ?: true
 
         return future {
             val keysToDelete =

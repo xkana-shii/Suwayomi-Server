@@ -104,7 +104,7 @@ class MetadataMutation {
         val mangaId: Int,
         val provider: String,
         val externalId: String,
-        val includeCover: Boolean = true,
+        val includeCover: Boolean? = null,
     )
 
     data class ApplyMetadataMatchPayload(
@@ -118,7 +118,8 @@ class MetadataMutation {
         userId: Int,
         input: ApplyMetadataMatchInput,
     ): CompletableFuture<ApplyMetadataMatchPayload?> {
-        val (clientMutationId, mangaId, providerName, externalId, includeCover) = input
+        val (clientMutationId, mangaId, providerName, externalId) = input
+        val includeCover = input.includeCover ?: true
 
         return future {
             val normalizedProviderName = providerName.lowercase()
