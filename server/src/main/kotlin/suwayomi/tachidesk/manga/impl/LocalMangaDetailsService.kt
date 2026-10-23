@@ -7,6 +7,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 
 class LocalMangaDetailsService(
@@ -66,7 +69,12 @@ class LocalMangaDetailsService(
         val tempFile = File(mangaDir, "$DETAILS_FILE_NAME.tmp")
 
         tempFile.writeText(content)
-        tempFile.renameTo(detailsFile)
+        // File.renameTo does not replace an existing file on Windows
+        try {
+            Files.move(tempFile.toPath(), detailsFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(tempFile.toPath(), detailsFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     suspend fun writeDetailsWithLock(
