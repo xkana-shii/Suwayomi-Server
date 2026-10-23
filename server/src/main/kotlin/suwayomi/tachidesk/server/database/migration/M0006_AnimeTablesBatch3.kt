@@ -27,7 +27,6 @@ class M0006_AnimeTablesBatch3 : AddTableMigration() {
 
         val isRead = bool("read").default(false)
         val isBookmarked = bool("bookmark").default(false)
-        val isFillermarked = bool("fillermarked").default(false)
         val lastPageRead = integer("last_page_read").default(0)
 
         // index is reserved by a function

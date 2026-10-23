@@ -1,36 +1,43 @@
 package suwayomi.tachidesk.opds.repository
 
 import dev.icerock.moko.resources.StringResource
-import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.alias
-import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.countDistinct
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.innerJoin
+import org.jetbrains.exposed.v1.core.leftJoin
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.i18n.MR
 import suwayomi.tachidesk.manga.impl.extension.Extension
+import suwayomi.tachidesk.manga.model.dataclass.ContentWarning
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
+import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.opds.constants.OpdsConstants
 import suwayomi.tachidesk.opds.dto.OpdsCategoryNavEntry
 import suwayomi.tachidesk.opds.dto.OpdsGenreNavEntry
 import suwayomi.tachidesk.opds.dto.OpdsLanguageNavEntry
+import suwayomi.tachidesk.opds.dto.OpdsMangaFilter
 import suwayomi.tachidesk.opds.dto.OpdsRootNavEntry
 import suwayomi.tachidesk.opds.dto.OpdsSourceNavEntry
 import suwayomi.tachidesk.opds.dto.OpdsStatusNavEntry
 import suwayomi.tachidesk.opds.util.OpdsStringUtil.encodeForOpdsURL
-import suwayomi.tachidesk.server.serverConfig
+import suwayomi.tachidesk.opds.util.OpdsStringUtil.formatSourceName
+import suwayomi.tachidesk.server.settings.userConfig
+import suwayomi.tachidesk.server.settings.value
 import java.util.Locale
 
 object NavigationRepository {
-    private val opdsItemsPerPageBounded: Int
-        get() = serverConfig.opdsItemsPerPage.value
+    private fun opdsItemsPerPage(userId: Int): Int = userConfig.opdsItemsPerPage.value(userId)
 
     private val rootSectionDetails: Map<String, Triple<String, StringResource, StringResource>> =
         mapOf(
@@ -131,99 +138,214 @@ object NavigationRepository {
             )
         }
 
-    // ... (El resto del archivo permanece sin cambios)
-    fun getExploreSources(pageNum: Int): Pair<List<OpdsSourceNavEntry>, Long> =
+    fun getExploreSources(
+        userId: Int,
+        pageNum: Int,
+        includeNsfw: Boolean,
+    ): Pair<List<OpdsSourceNavEntry>, Long> =
         transaction {
+            val perPage = opdsItemsPerPage(userId)
             val query =
                 SourceTable
-                    .join(ExtensionTable, JoinType.LEFT, onColumn = SourceTable.extension, otherColumn = ExtensionTable.id)
-                    .select(SourceTable.id, SourceTable.name, ExtensionTable.apkName)
+                    .leftJoin(
+                        ExtensionTable,
+                        onColumn = { SourceTable.extension },
+                        otherColumn = { ExtensionTable.id },
+                    ).select(SourceTable.id, SourceTable.name, SourceTable.lang, ExtensionTable.pkgName)
                     .where { ExtensionTable.isInstalled eq true }
-                    .groupBy(SourceTable.id, SourceTable.name, ExtensionTable.apkName)
+                    .groupBy(SourceTable.id, SourceTable.name, SourceTable.lang, ExtensionTable.pkgName)
                     .orderBy(SourceTable.name to SortOrder.ASC)
+
+            // hide NSFW sources from users without the NSFW permission
+            if (!includeNsfw) {
+                query.andWhere { SourceTable.contentWarning less ContentWarning.MIXED.ordinal }
+            }
 
             val totalCount = query.count()
             val sources =
                 query
-                    .limit(opdsItemsPerPageBounded)
-                    .offset(((pageNum - 1) * opdsItemsPerPageBounded).toLong())
+                    .limit(perPage)
+                    .offset(((pageNum - 1) * perPage).toLong())
                     .map {
                         OpdsSourceNavEntry(
                             id = it[SourceTable.id].value,
-                            name = it[SourceTable.name],
-                            iconUrl = it[ExtensionTable.apkName].let { apkName -> Extension.getExtensionIconUrl(apkName) },
+                            name = formatSourceName(it[SourceTable.name], it[SourceTable.lang]),
+                            iconUrl = it[ExtensionTable.pkgName].let { pkgName -> Extension.proxyExtensionIconUrl(pkgName) },
                             mangaCount = null,
                         )
                     }
             Pair(sources, totalCount)
         }
 
-    fun getLibrarySources(pageNum: Int): Pair<List<OpdsSourceNavEntry>, Long> =
+    fun getLibrarySources(
+        userId: Int,
+        pageNum: Int? = null,
+        activeFilters: OpdsMangaFilter = OpdsMangaFilter(),
+    ): Pair<List<OpdsSourceNavEntry>, Long> =
         transaction {
             val mangaCount = MangaTable.id.countDistinct().alias("manga_count")
 
-            val query =
+            var baseJoin =
                 SourceTable
-                    .join(MangaTable, JoinType.INNER, SourceTable.id, MangaTable.sourceReference)
-                    .join(ExtensionTable, JoinType.LEFT, onColumn = SourceTable.extension, otherColumn = ExtensionTable.id)
-                    .select(SourceTable.id, SourceTable.name, ExtensionTable.apkName, mangaCount)
-                    .where { MangaTable.inLibrary eq true }
-                    .groupBy(SourceTable.id, SourceTable.name, ExtensionTable.apkName)
-                    .orderBy(SourceTable.name to SortOrder.ASC)
+                    .innerJoin(
+                        MangaTable.getWithUserData(userId),
+                        { SourceTable.id },
+                        { MangaTable.sourceReference },
+                    ).leftJoin(
+                        ExtensionTable,
+                        onColumn = { SourceTable.extension },
+                        otherColumn = { ExtensionTable.id },
+                    )
+
+            if (activeFilters.categoryId != null) {
+                baseJoin =
+                    baseJoin.leftJoin(
+                        CategoryMangaTable,
+                        { MangaTable.id },
+                        { CategoryMangaTable.manga },
+                        additionalConstraint = {
+                            CategoryMangaTable.user eq userId
+                        },
+                    )
+            }
+
+            val query =
+                baseJoin
+                    .select(SourceTable.id, SourceTable.name, SourceTable.lang, ExtensionTable.pkgName, mangaCount)
+                    .where { MangaUserTable.inLibrary eq true }
+
+            query.applyOpdsMangaFilter(userId, activeFilters, excludeField = "source_id")
+
+            query
+                .groupBy(SourceTable.id, SourceTable.name, SourceTable.lang, ExtensionTable.pkgName)
+                .orderBy(SourceTable.name to SortOrder.ASC)
 
             val totalCount = query.count()
-            val sources =
+
+            if (pageNum != null) {
                 query
-                    .limit(opdsItemsPerPageBounded)
-                    .offset(((pageNum - 1) * opdsItemsPerPageBounded).toLong())
-                    .map {
-                        OpdsSourceNavEntry(
-                            id = it[SourceTable.id].value,
-                            name = it[SourceTable.name],
-                            iconUrl = it[ExtensionTable.apkName].let { apkName -> Extension.getExtensionIconUrl(apkName) },
-                            mangaCount = it[mangaCount],
-                        )
-                    }
+                    .limit(opdsItemsPerPage(userId))
+                    .offset(((pageNum - 1) * opdsItemsPerPage(userId)).toLong())
+            }
+
+            val sources =
+                query.map {
+                    OpdsSourceNavEntry(
+                        id = it[SourceTable.id].value,
+                        name = formatSourceName(it[SourceTable.name], it[SourceTable.lang]),
+                        iconUrl = it[ExtensionTable.pkgName].let { pkgName -> Extension.proxyExtensionIconUrl(pkgName) },
+                        mangaCount = it[mangaCount],
+                    )
+                }
             Pair(sources, totalCount)
         }
 
-    fun getCategories(pageNum: Int): Pair<List<OpdsCategoryNavEntry>, Long> =
+    fun getSourceDetails(sourceId: Long): Pair<String, String?>? =
+        transaction {
+            SourceTable
+                .leftJoin(
+                    ExtensionTable,
+                    onColumn = { SourceTable.extension },
+                    otherColumn = { ExtensionTable.id },
+                ).select(SourceTable.name, SourceTable.lang, ExtensionTable.pkgName)
+                .where { SourceTable.id eq sourceId }
+                .firstOrNull()
+                ?.let {
+                    val name = formatSourceName(it[SourceTable.name], it[SourceTable.lang])
+                    val icon = Extension.proxyExtensionIconUrl(it[ExtensionTable.pkgName])
+                    Pair(name, icon)
+                }
+        }
+
+    fun getCategories(
+        userId: Int,
+        pageNum: Int? = null,
+        activeFilters: OpdsMangaFilter = OpdsMangaFilter(),
+    ): Pair<List<OpdsCategoryNavEntry>, Long> =
         transaction {
             val mangaCount = MangaTable.id.countDistinct().alias("manga_count")
 
             val query =
                 CategoryTable
-                    .join(CategoryMangaTable, JoinType.INNER, CategoryTable.id, CategoryMangaTable.category)
-                    .join(MangaTable, JoinType.INNER, CategoryMangaTable.manga, MangaTable.id)
-                    .select(CategoryTable.id, CategoryTable.name, mangaCount)
-                    .where { MangaTable.inLibrary eq true }
-                    .groupBy(CategoryTable.id, CategoryTable.name)
-                    .orderBy(CategoryTable.order to SortOrder.ASC)
+                    .innerJoin(
+                        CategoryMangaTable,
+                        { CategoryTable.id },
+                        { CategoryMangaTable.category },
+                        additionalConstraint = {
+                            CategoryMangaTable.user eq userId
+                        },
+                    ).innerJoin(
+                        MangaTable.getWithUserData(userId),
+                        { CategoryMangaTable.manga },
+                        { MangaTable.id },
+                    ).innerJoin(
+                        SourceTable,
+                        { MangaTable.sourceReference },
+                        { SourceTable.id },
+                    ).select(CategoryTable.id, CategoryTable.name, mangaCount)
+                    .where { MangaUserTable.inLibrary eq true }
+
+            query.applyOpdsMangaFilter(userId, activeFilters, excludeField = "category_id")
+
+            query
+                .groupBy(CategoryTable.id, CategoryTable.name)
+                .orderBy(CategoryTable.order to SortOrder.ASC)
 
             val totalCount = query.count()
-            val categories =
+
+            if (pageNum != null) {
                 query
-                    .limit(opdsItemsPerPageBounded)
-                    .offset(((pageNum - 1) * opdsItemsPerPageBounded).toLong())
-                    .map {
-                        OpdsCategoryNavEntry(
-                            id = it[CategoryTable.id].value,
-                            name = it[CategoryTable.name],
-                            mangaCount = it[mangaCount],
-                        )
-                    }
+                    .limit(opdsItemsPerPage(userId))
+                    .offset(((pageNum - 1) * opdsItemsPerPage(userId)).toLong())
+            }
+
+            val categories =
+                query.map {
+                    OpdsCategoryNavEntry(
+                        id = it[CategoryTable.id].value,
+                        name = it[CategoryTable.name],
+                        mangaCount = it[mangaCount],
+                    )
+                }
             Pair(categories, totalCount)
         }
 
     fun getGenres(
-        pageNum: Int,
+        userId: Int,
         locale: Locale,
+        pageNum: Int? = null,
+        activeFilters: OpdsMangaFilter = OpdsMangaFilter(),
     ): Pair<List<OpdsGenreNavEntry>, Long> =
         transaction {
-            val allGenres =
+            var baseJoin =
                 MangaTable
+                    .getWithUserData(userId)
+                    .innerJoin(
+                        SourceTable,
+                        { MangaTable.sourceReference },
+                        { SourceTable.id },
+                    )
+            if (activeFilters.categoryId != null) {
+                baseJoin =
+                    baseJoin.leftJoin(
+                        CategoryMangaTable,
+                        { MangaTable.id },
+                        { CategoryMangaTable.manga },
+                        additionalConstraint = {
+                            CategoryMangaTable.user eq userId
+                        },
+                    )
+            }
+
+            val query =
+                baseJoin
                     .select(MangaTable.genre)
-                    .where { MangaTable.inLibrary eq true }
+                    .where { MangaUserTable.inLibrary eq true }
+
+            query.applyOpdsMangaFilter(userId, activeFilters, excludeField = "genre")
+
+            val allGenres =
+                query
                     .mapNotNull { it[MangaTable.genre] }
                     .flatMap { it.split(",").map(String::trim).filterNot(String::isBlank) }
 
@@ -231,21 +353,33 @@ object NavigationRepository {
             val distinctGenres = genreCounts.keys.sorted()
 
             val totalCount = distinctGenres.size.toLong()
-            val fromIndex = ((pageNum - 1) * opdsItemsPerPageBounded)
-            val toIndex = minOf(fromIndex + opdsItemsPerPageBounded, distinctGenres.size)
+
+            val finalGenres =
+                if (pageNum != null) {
+                    val fromIndex = ((pageNum - 1) * opdsItemsPerPage(userId))
+                    val toIndex = minOf(fromIndex + opdsItemsPerPage(userId), distinctGenres.size)
+                    if (fromIndex < distinctGenres.size) distinctGenres.subList(fromIndex, toIndex) else emptyList()
+                } else {
+                    distinctGenres
+                }
+
             val paginatedGenres =
-                (if (fromIndex < distinctGenres.size) distinctGenres.subList(fromIndex, toIndex) else emptyList())
-                    .map { genreName ->
-                        OpdsGenreNavEntry(
-                            id = genreName.encodeForOpdsURL(),
-                            title = genreName,
-                            mangaCount = genreCounts[genreName]?.toLong() ?: 0L,
-                        )
-                    }
+                finalGenres.map { genreName ->
+                    OpdsGenreNavEntry(
+                        id = genreName.encodeForOpdsURL(),
+                        title = genreName,
+                        mangaCount = genreCounts[genreName]?.toLong() ?: 0L,
+                    )
+                }
             Pair(paginatedGenres, totalCount)
         }
 
-    fun getStatuses(locale: Locale): List<OpdsStatusNavEntry> {
+    fun getStatuses(
+        userId: Int,
+        locale: Locale,
+        pageNum: Int? = null,
+        activeFilters: OpdsMangaFilter = OpdsMangaFilter(),
+    ): Pair<List<OpdsStatusNavEntry>, Long> {
         val statusStringResources: Map<MangaStatus, StringResource> =
             mapOf(
                 MangaStatus.UNKNOWN to MR.strings.manga_status_unknown,
@@ -259,43 +393,127 @@ object NavigationRepository {
 
         val statusCounts =
             transaction {
-                MangaTable
-                    .select(MangaTable.status, MangaTable.id.count())
-                    .where { MangaTable.inLibrary eq true }
+                val countExpr = MangaTable.id.countDistinct().alias("manga_count")
+
+                var baseJoin =
+                    MangaTable
+                        .getWithUserData(userId)
+                        .innerJoin(
+                            SourceTable,
+                            { MangaTable.sourceReference },
+                            { SourceTable.id },
+                        )
+                if (activeFilters.categoryId != null) {
+                    baseJoin =
+                        baseJoin.leftJoin(
+                            CategoryMangaTable,
+                            { MangaTable.id },
+                            { CategoryMangaTable.manga },
+                            additionalConstraint = {
+                                CategoryMangaTable.user eq userId
+                            },
+                        )
+                }
+
+                val query =
+                    baseJoin
+                        .select(MangaTable.status, countExpr)
+                        .where { MangaUserTable.inLibrary eq true }
+
+                query.applyOpdsMangaFilter(userId, activeFilters, excludeField = "status_id")
+
+                query
                     .groupBy(MangaTable.status)
-                    .associate { it[MangaTable.status] to it[MangaTable.id.count()] }
+                    .associate { it[MangaTable.status] to it[countExpr] }
             }
 
-        return MangaStatus.entries
-            .map { mangaStatus ->
-                val titleRes = statusStringResources[mangaStatus] ?: MR.strings.manga_status_unknown
-                OpdsStatusNavEntry(
-                    id = mangaStatus.value,
-                    title = titleRes.localized(locale),
-                    mangaCount = statusCounts[mangaStatus.value] ?: 0L,
-                )
-            }.sortedBy { it.id }
+        val allStatuses =
+            MangaStatus.entries
+                .map { mangaStatus ->
+                    val titleRes = statusStringResources[mangaStatus] ?: MR.strings.manga_status_unknown
+                    OpdsStatusNavEntry(
+                        id = mangaStatus.value,
+                        title = titleRes.localized(locale),
+                        mangaCount = statusCounts[mangaStatus.value] ?: 0L,
+                    )
+                }.sortedBy { it.id }
+
+        val totalCount = allStatuses.size.toLong()
+
+        val paginatedStatuses =
+            if (pageNum != null) {
+                val fromIndex = ((pageNum - 1) * opdsItemsPerPage(userId))
+                val toIndex = minOf(fromIndex + opdsItemsPerPage(userId), allStatuses.size)
+                if (fromIndex < allStatuses.size) allStatuses.subList(fromIndex, toIndex) else emptyList()
+            } else {
+                allStatuses
+            }
+
+        return Pair(paginatedStatuses, totalCount)
     }
 
-    fun getContentLanguages(uiLocale: Locale): List<OpdsLanguageNavEntry> =
+    fun getContentLanguages(
+        userId: Int,
+        locale: Locale,
+        pageNum: Int? = null,
+        activeFilters: OpdsMangaFilter = OpdsMangaFilter(),
+    ): Pair<List<OpdsLanguageNavEntry>, Long> =
         transaction {
             val mangaCount = MangaTable.id.countDistinct().alias("manga_count")
-            SourceTable
-                .join(MangaTable, JoinType.INNER, SourceTable.id, MangaTable.sourceReference)
-                .select(SourceTable.lang, mangaCount)
-                .where { MangaTable.inLibrary eq true }
+
+            var baseJoin =
+                SourceTable
+                    .innerJoin(
+                        MangaTable.getWithUserData(userId),
+                        { SourceTable.id },
+                        { MangaTable.sourceReference },
+                    )
+            if (activeFilters.categoryId != null) {
+                baseJoin =
+                    baseJoin.leftJoin(
+                        CategoryMangaTable,
+                        { MangaTable.id },
+                        { CategoryMangaTable.manga },
+                        additionalConstraint = {
+                            CategoryMangaTable.user eq userId
+                        },
+                    )
+            }
+
+            val query =
+                baseJoin
+                    .select(SourceTable.lang, mangaCount)
+                    .where { MangaUserTable.inLibrary eq true }
+
+            query.applyOpdsMangaFilter(userId, activeFilters, excludeField = "lang_code")
+
+            query
                 .groupBy(SourceTable.lang)
                 .orderBy(SourceTable.lang to SortOrder.ASC)
-                .map {
+
+            val totalCount = query.count()
+
+            if (pageNum != null) {
+                query
+                    .limit(opdsItemsPerPage(userId))
+                    .offset(((pageNum - 1) * opdsItemsPerPage(userId)).toLong())
+            }
+
+            val languages =
+                query.map {
                     val langCode = it[SourceTable.lang]
                     OpdsLanguageNavEntry(
                         id = langCode,
                         title =
-                            Locale.forLanguageTag(langCode).getDisplayName(uiLocale).replaceFirstChar { char ->
-                                if (char.isLowerCase()) char.titlecase(uiLocale) else char.toString()
-                            },
+                            Locale
+                                .forLanguageTag(langCode)
+                                .getDisplayName(locale)
+                                .replaceFirstChar { char ->
+                                    if (char.isLowerCase()) char.titlecase(locale) else char.toString()
+                                }.ifEmpty { langCode },
                         mangaCount = it[mangaCount],
                     )
                 }
+            Pair(languages, totalCount)
         }
 }

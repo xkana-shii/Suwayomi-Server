@@ -77,9 +77,11 @@ These clients are built-in options, and the server can keep them automatically u
 - [Suwayomi-VUI](https://github.com/Suwayomi/Suwayomi-VUI): Web app, PWA
 
 ##### Other clients (potentially inactive or abandoned)
+- [Kaori](https://github.com/riyaniii/Kaori): A comic reader for GNOME, with a beautiful libadwaita UI, and natural touchpad gestures.
 - [Tachidesk-VaadinUI](https://github.com/Suwayomi/Tachidesk-VaadinUI): Desktop app (windows, linux, mac); UI in the browser, manages its own suwayomi server instance
 - [Moku](https://github.com/Youwes09/Moku): Desktop app (windows, linux, mac), can manage its own suwayomi server instance
 - [Tachidesk-JUI](https://github.com/Suwayomi/Tachidesk-JUI): Desktop app (windows, linux, mac); can manage its own suwayomi server instance
+- [Suwayomi-Tsumiru](https://github.com/Suwayomi/Suwayomi-Tsumiru): Android app; iOS app; Desktop app (windows, linux, mac); Web app; successor to Tachidesk-Sorayomi with offline reading of downloaded chapters; requires access to a running server
 - [Tachidesk-Sorayomi](https://github.com/Suwayomi/Tachidesk-Sorayomi): Web app; Desktop app (windows, linux, mac); Android app; requires access to a running server
 - [Tachidesk-qtui](https://github.com/Suwayomi/Tachidesk-qtui): Android app; iOS app Desktop app (linux); requires access to a running server
 - [Suwayomi Client for KOReader](https://github.com/LK4D4/suwayomi.koplugin): KOReader plugin; works anywhere KOReader can run (Android, Kindle, Kobo, etc.); requires access to a running server
@@ -110,17 +112,12 @@ Download the latest `linux-x64`(x86_64) release from [the releases section](http
 WebView support is implemented via [JCEF](https://github.com/JetBrains/jcef).
 This is optional, and is only necessary to support some extensions.
 
-To have a functional WebView, several dependencies are required; aside from X11 libraries necessary for rendering Chromium, some JNI bindings are necessary: gluegen and jogl (found in Ubuntu as `libgluegen2-jni` and `libjogl2-jni`).
-Note that on some systems (e.g. Ubuntu), the JNI libraries are not automatically found, see below.
+To have a functional WebView, some X11 dependencies are required for rendering Chromium.
+These include `libxrender`, `libxcomposite` `libxdamage`, `libxkbcommon` and `libxtst`.
 
 A CEF server is launched on startup, which loads the X11 libraries.
 If those are missing, you should see "Could not load 'jcef' library".
 If so, use `ldd ~/.local/share/Tachidesk/bin/kcef/libjcef.so | grep not` to figure out which libraries are not found on your system.
-
-The JNI bindings are only loaded when a browser is actually launched.
-This is done by extensions that rely on WebView, not by Suwayomi itself.
-If there is a problem loading the JNI libraries, you should see a message indicating the library and the search path.
-This search path includes the current working directory, if you do not want to modify system directories.
 
 Refer to the [Dockerfile](https://github.com/Suwayomi/Suwayomi-Server-docker/blob/main/Dockerfile) for more details.
 

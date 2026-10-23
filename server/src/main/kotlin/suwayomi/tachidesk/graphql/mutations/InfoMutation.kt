@@ -8,19 +8,25 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.notInSubQuery
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
-import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.directives.RequirePermissions
+import suwayomi.tachidesk.graphql.server.primitives.inIds
 import suwayomi.tachidesk.graphql.types.UpdateState.DOWNLOADING
 import suwayomi.tachidesk.graphql.types.UpdateState.ERROR
 import suwayomi.tachidesk.graphql.types.UpdateState.IDLE
 import suwayomi.tachidesk.graphql.types.WebUIFlavor
 import suwayomi.tachidesk.graphql.types.WebUIUpdateStatus
 import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.UserPermission
 import suwayomi.tachidesk.server.util.ExitCode
 import suwayomi.tachidesk.server.util.WebInterfaceManager
 import suwayomi.tachidesk.server.util.shutdownApp
@@ -108,6 +114,7 @@ class InfoMutation {
         }
 
     @RequireAuth
+    @RequirePermissions(UserPermission.MANAGE_SETTINGS)
     fun shutdownServer(input: ShutdownServerInput): CompletableFuture<ShutdownServerPayload?> =
         future {
             thread(start = true, isDaemon = false) {
@@ -121,7 +128,9 @@ class InfoMutation {
             )
         }
 
+    // fork: removes mangas that are in no user's library (optionally keeping the ones with reading progress)
     @RequireAuth
+    @RequirePermissions(UserPermission.MANAGE_SETTINGS)
     fun clearDatabase(input: ClearDatabaseInput): CompletableFuture<ClearDatabasePayload?> =
         future {
             val keepRead = input.keepReadManga ?: true
@@ -129,18 +138,21 @@ class InfoMutation {
             val sourceIds: List<Long> = input.sourceIds ?: emptyList()
 
             transaction {
+                val inAnyLibrary =
+                    MangaUserTable
+                        .select(MangaUserTable.manga)
+                        .where { MangaUserTable.inLibrary eq true }
                 val candidateIds =
-                    if (sourceIds.isEmpty()) {
-                        MangaTable
-                            .selectAll()
-                            .where { MangaTable.inLibrary eq false }
-                            .map { it[MangaTable.id].value }
-                    } else {
-                        MangaTable
-                            .selectAll()
-                            .where { (MangaTable.inLibrary eq false) and (MangaTable.sourceReference inList sourceIds) }
-                            .map { it[MangaTable.id].value }
-                    }
+                    MangaTable
+                        .select(MangaTable.id)
+                        .where {
+                            val notInLibrary = MangaTable.id notInSubQuery inAnyLibrary
+                            if (sourceIds.isEmpty()) {
+                                notInLibrary
+                            } else {
+                                notInLibrary and (MangaTable.sourceReference inList sourceIds)
+                            }
+                        }.map { it[MangaTable.id].value }
 
                 if (candidateIds.isEmpty()) {
                     return@transaction
@@ -149,9 +161,9 @@ class InfoMutation {
                 val idsToDelete =
                     if (keepRead) {
                         val idsWithRead =
-                            ChapterTable
-                                .selectAll()
-                                .where { (ChapterTable.isRead eq true) or (ChapterTable.lastPageRead neq 0) }
+                            (ChapterTable innerJoin ChapterUserTable)
+                                .select(ChapterTable.manga)
+                                .where { (ChapterUserTable.isRead eq true) or (ChapterUserTable.lastPageRead neq 0) }
                                 .map { it[ChapterTable.manga].value }
                                 .toSet()
 
@@ -164,7 +176,7 @@ class InfoMutation {
                     return@transaction
                 }
 
-                MangaTable.deleteWhere { MangaTable.id inList idsToDelete }
+                MangaTable.deleteWhere { MangaTable.id inIds idsToDelete }
             }
 
             ClearDatabasePayload(clientMutationId = input.clientMutationId, success = true)

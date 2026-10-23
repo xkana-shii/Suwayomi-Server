@@ -18,9 +18,10 @@ import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
+import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrStub
 import suwayomi.tachidesk.manga.model.dataclass.PagedMangaListDataClass
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
 import java.time.Instant
 
@@ -35,7 +36,7 @@ object MangaList {
         require(pageNum > 0) {
             "pageNum = $pageNum is not in valid range"
         }
-        val source = getCatalogueSourceOrStub(sourceId)
+        val source = getSourceOrStub(sourceId)
         val mangasPage =
             if (popular) {
                 source.getPopularManga(pageNum)
@@ -53,11 +54,12 @@ object MangaList {
         transaction {
             val existingMangaUrlsToId =
                 MangaTable
+                    .leftJoin(MangaUserTable)
                     .selectAll()
                     .where {
                         (MangaTable.sourceReference eq sourceId) and
                             (MangaTable.url inList mangas.map { it.url })
-                    }.associateBy { it[MangaTable.url] }
+                    }.groupBy { it[MangaTable.url] }
             val existingMangaUrls = existingMangaUrlsToId.map { it.key }
 
             val mangasToInsert = mangas.filter { !existingMangaUrls.contains(it.url) }
@@ -75,6 +77,7 @@ object MangaList {
                         this[MangaTable.status] = it.status
                         this[MangaTable.thumbnail_url] = it.thumbnail_url
                         this[MangaTable.updateStrategy] = it.update_strategy.name
+                        this[MangaTable.memo] = it.memo
 
                         this[MangaTable.sourceReference] = sourceId
                     }.associate { Pair(it[MangaTable.url], it[MangaTable.id].value) }
@@ -86,14 +89,18 @@ object MangaList {
                 mangas
                     .mapNotNull { sManga ->
                         existingMangaUrlsToId[sManga.url]?.let { sManga to it }
-                    }.filterNot { (_, resultRow) ->
-                        resultRow[MangaTable.inLibrary] && resultRow[MangaTable.sourceReference] != LocalSource.ID
+                    }.filterNot { (_, resultRows) ->
+                        resultRows.any {
+                            it.getOrNull(MangaUserTable.inLibrary) == true &&
+                                it[MangaTable.sourceReference] != LocalSource.ID
+                        }
                     }
 
             if (mangaToUpdate.isNotEmpty()) {
                 BatchUpdateStatement(MangaTable)
                     .apply {
-                        mangaToUpdate.forEach { (sManga, manga) ->
+                        mangaToUpdate.forEach { (sManga, mangas) ->
+                            val manga = mangas.first()
                             addBatch(EntityID(manga[MangaTable.id].value, MangaTable))
                             this[MangaTable.title] = sManga.title
                             this[MangaTable.artist] = sManga.artist ?: manga[MangaTable.artist]
@@ -103,6 +110,7 @@ object MangaList {
                             this[MangaTable.status] = sManga.status
                             this[MangaTable.thumbnail_url] = sManga.thumbnail_url ?: manga[MangaTable.thumbnail_url]
                             this[MangaTable.updateStrategy] = sManga.update_strategy.name
+                            this[MangaTable.memo] = sManga.memo
                             if (!sManga.thumbnail_url.isNullOrEmpty() && manga[MangaTable.thumbnail_url] != sManga.thumbnail_url) {
                                 this[MangaTable.thumbnailUrlLastFetched] = Instant.now().epochSecond
                                 Manga.clearThumbnail(manga[MangaTable.id].value)
@@ -117,7 +125,7 @@ object MangaList {
 
             val mangaUrlsToId =
                 existingMangaUrlsToId
-                    .mapValues { it.value[MangaTable.id].value } + insertedMangaUrlsToId
+                    .mapValues { it.value.first()[MangaTable.id].value } + insertedMangaUrlsToId
 
             mangas.map { manga ->
                 mangaUrlsToId[manga.url]
@@ -130,7 +138,11 @@ object MangaList {
         val mangaList =
             transaction {
                 val mangaIds = insertOrUpdate(sourceId)
-                return@transaction MangaTable.selectAll().where { MangaTable.id inList mangaIds }.map { MangaTable.toDataClass(it) }
+                return@transaction MangaTable
+                    .selectAll()
+                    .where {
+                        MangaTable.id inList mangaIds
+                    }.map { MangaTable.toDataClass(it) }
             }
         return PagedMangaListDataClass(
             mangaList,

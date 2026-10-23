@@ -7,12 +7,12 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.manga.impl.download.fileProvider.ChaptersFilesProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.FileType.RegularFile
+import suwayomi.tachidesk.manga.impl.util.getCandidateChapterDownloadPathsRelative
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
-import suwayomi.tachidesk.manga.impl.util.getCandidateChapterDownloadPathsRelative
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.FileDeletionHelper
-import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.server.ApplicationDirs
 import uy.kohesive.injekt.injectLazy
 import java.io.BufferedOutputStream
@@ -32,13 +32,15 @@ class FolderProvider(
     mangaId: Int,
     chapterId: Int,
 ) : ChaptersFilesProvider<RegularFile>(mangaId, chapterId) {
-    override fun getImageFiles(): List<RegularFile> {
-        // Prefer existing candidate folder if any, else canonical path
-        val chapterFolderPath = resolveExistingChapterDownloadFolder(mangaId, chapterId) ?: getChapterDownloadPath(mangaId, chapterId)
-        val chapterFolder = File(chapterFolderPath)
+    // fork: downloads may still use the legacy (unhashed) chapter name
+    private suspend fun existingOrCanonicalFolder(): File =
+        File(resolveExistingChapterDownloadFolder(mangaId, chapterId) ?: getChapterDownloadPath(mangaId, chapterId))
+
+    override suspend fun getImageFiles(): List<RegularFile> {
+        val chapterFolder = existingOrCanonicalFolder()
 
         if (!chapterFolder.exists()) {
-            throw Exception("download folder does not exist")
+            throw NoSuchElementException("download folder does not exist")
         }
 
         return chapterFolder
@@ -48,14 +50,13 @@ class FolderProvider(
             .map(::RegularFile)
     }
 
-    override fun getImageInputStream(image: RegularFile): FileInputStream = FileInputStream(image.file)
+    override suspend fun getImageInputStream(image: RegularFile): FileInputStream = FileInputStream(image.file)
 
-    override fun extractExistingDownload() {
+    override suspend fun extractExistingDownload() {
         // nothing to do
     }
 
     override suspend fun handleSuccessfulDownload() {
-        // After pages written to cache, copy/create the canonical final location (canonical = hashed path)
         val chapterDir = getChapterDownloadPath(mangaId, chapterId)
         val folder = File(chapterDir)
         folder.mkdirs()
@@ -64,40 +65,33 @@ class FolderProvider(
         File(cacheChapterDir).copyRecursively(folder, true)
     }
 
-    override fun delete(): Boolean {
-        // Delete all candidate folder names and candidate .cbz files
-        val candidates = getCandidateChapterDownloadPathsRelative(mangaId, chapterId)
-        var deletedAny = false
-
-        for (rel in candidates) {
-            val chapterDir = File(applicationDirs.mangaDownloadsRoot, rel)
-            if (chapterDir.exists()) {
-                val chapterDirDeleted = chapterDir.deleteRecursively()
-                if (chapterDirDeleted) {
-                    transaction {
-                        ChapterTable.update({ ChapterTable.id eq chapterId }) {
-                            it[koreaderHash] = null
-                        }
-                    }
-                    deletedAny = true
-                }
-                FileDeletionHelper.cleanupParentFoldersFor(chapterDir, applicationDirs.mangaDownloadsRoot)
-            }
-
-            val cbzFile = File(applicationDirs.mangaDownloadsRoot, "$rel.cbz")
-            if (cbzFile.exists()) {
-                if (cbzFile.delete()) {
-                    deletedAny = true
-                }
-                FileDeletionHelper.cleanupParentFoldersFor(cbzFile, applicationDirs.mangaDownloadsRoot)
-            }
+    override suspend fun delete(): Boolean {
+        // fork: delete all candidate folder names and candidate .cbz files
+        val candidates =
+            getCandidateChapterDownloadPathsRelative(mangaId, chapterId)
+                .flatMap { listOf(File(applicationDirs.mangaDownloadsRoot, it), File(applicationDirs.mangaDownloadsRoot, "$it.cbz")) }
+                .filter { it.exists() }
+        if (candidates.isEmpty()) {
+            return true
         }
 
-        return deletedAny
+        var chapterDirDeleted = true
+        candidates.forEach { chapterDir ->
+            chapterDirDeleted = chapterDir.deleteRecursively() && chapterDirDeleted
+            FileDeletionHelper.cleanupParentFoldersFor(chapterDir, applicationDirs.mangaDownloadsRoot)
+        }
+        if (chapterDirDeleted) {
+            transaction {
+                ChapterUserTable.update({ ChapterUserTable.chapter eq chapterId }) {
+                    it[koreaderHash] = null
+                }
+            }
+        }
+        return chapterDirDeleted
     }
 
-    override fun getAsArchiveStream(): Pair<InputStream, Long> {
-        val chapterDir = File(getChapterDownloadPath(mangaId, chapterId))
+    override suspend fun getAsArchiveStream(): Pair<InputStream, Long> {
+        val chapterDir = existingOrCanonicalFolder()
 
         if (!chapterDir.exists() || !chapterDir.isDirectory || chapterDir.listFiles().isNullOrEmpty()) {
             throw IllegalArgumentException("Invalid folder to create CBZ for chapter ID: $chapterId")
@@ -127,8 +121,8 @@ class FolderProvider(
         return ByteArrayInputStream(zipData) to zipData.size.toLong()
     }
 
-    override fun getArchiveSize(): Long {
-        val chapterDir = File(getChapterDownloadPath(mangaId, chapterId))
+    override suspend fun getArchiveSize(): Long {
+        val chapterDir = existingOrCanonicalFolder()
         if (!chapterDir.exists() || !chapterDir.isDirectory) return 0L
         // Approximation: actual CBZ size is slightly larger due to ZIP metadata, but sufficient for Content-Length header.
         return chapterDir.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L

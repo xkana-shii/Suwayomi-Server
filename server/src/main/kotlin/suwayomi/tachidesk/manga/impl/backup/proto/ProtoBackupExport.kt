@@ -25,7 +25,9 @@ import okio.Buffer
 import okio.Sink
 import okio.buffer
 import okio.gzip
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.global.model.table.UserAccountTable
 import suwayomi.tachidesk.manga.impl.backup.BackupFlags
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupCategoryHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupGlobalMetaHandler
@@ -33,6 +35,7 @@ import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupMangaHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupPreferenceHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSettingsHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupSourceHandler
+import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupUserSettingsHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.models.Backup
 import suwayomi.tachidesk.server.ApplicationDirs
 import suwayomi.tachidesk.server.serverConfig
@@ -49,8 +52,6 @@ import kotlin.system.measureTimeMillis
 import kotlin.time.Duration.Companion.days
 
 object ProtoBackupExport : ProtoBackupBase() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     private val logger = KotlinLogging.logger { }
     private val applicationDirs: ApplicationDirs by injectLazy()
     private var backupSchedulerJobId: String = ""
@@ -58,7 +59,166 @@ object ProtoBackupExport : ProtoBackupBase() {
     private val preferences = Injekt.get<Application>().getSharedPreferences("server_util", Context.MODE_PRIVATE)
     private const val AUTO_BACKUP_FILENAME = "auto"
 
-    // Progress/state machinery (mirrors import but with 'create' naming)
+    init {
+        serverConfig.subscribeTo(
+            combine(serverConfig.backupInterval, serverConfig.backupTime) { interval, timeOfDay ->
+                Pair(
+                    interval,
+                    timeOfDay,
+                )
+            },
+            ::scheduleAutomatedBackupTask,
+        )
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    fun scheduleAutomatedBackupTask() {
+        HAScheduler.descheduleCron(backupSchedulerJobId)
+
+        val areAutomatedBackupsDisabled = serverConfig.backupInterval.value == 0
+        if (areAutomatedBackupsDisabled) {
+            return
+        }
+
+        val task = {
+            try {
+                cleanupAutomatedBackups()
+                if (createAutomatedBackup()) {
+                    preferences.edit().putLong(LAST_AUTOMATED_BACKUP_KEY, System.currentTimeMillis()).apply()
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "scheduleAutomatedBackupTask: failed due to" }
+            }
+        }
+
+        val (backupHour, backupMinute) =
+            serverConfig.backupTime.value
+                .split(":")
+                .map { it.toInt() }
+        val backupInterval = serverConfig.backupInterval.value.days
+
+        // trigger last backup in case the server wasn't running on the scheduled time
+        val lastAutomatedBackup = preferences.getLong(LAST_AUTOMATED_BACKUP_KEY, 0)
+        val wasPreviousBackupTriggered =
+            (System.currentTimeMillis() - lastAutomatedBackup) < backupInterval.inWholeMilliseconds
+        if (!wasPreviousBackupTriggered) {
+            GlobalScope.launch(Dispatchers.IO) {
+                task()
+            }
+        }
+
+        backupSchedulerJobId = HAScheduler.scheduleCron(task, "$backupMinute $backupHour */${backupInterval.inWholeDays} * *", "backup")
+    }
+
+    /**
+     * Creates one backup file per user. Returns true if at least one backup succeeded.
+     */
+    internal fun createAutomatedBackup(): Boolean {
+        logger.info { "Creating automated backup..." }
+
+        val users =
+            transaction {
+                UserAccountTable
+                    .select(UserAccountTable.id, UserAccountTable.username)
+                    .map { it[UserAccountTable.id].value to it[UserAccountTable.username] }
+            }
+        if (users.isEmpty()) {
+            logger.warn { "No users found; skipping automated backup" }
+            return false
+        }
+
+        val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
+        automatedBackupDir.mkdirs()
+
+        var anySucceeded = false
+        users.forEach { (userId, username) ->
+            try {
+                createBackup(userId, BackupFlags.fromServerConfig()).use { input ->
+                    val backupFile = File(automatedBackupDir, Backup.getFilename("$AUTO_BACKUP_FILENAME.$username"))
+
+                    backupFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                logger.info { "Automated backup for user $userId complete" }
+                anySucceeded = true
+            } catch (e: Exception) {
+                logger.error(e) { "Automated backup for user $userId failed" }
+            }
+        }
+        return anySucceeded
+    }
+
+    internal fun cleanupAutomatedBackups() {
+        logger.debug { "Cleanup automated backups (ttl= ${serverConfig.backupTTL.value})" }
+
+        val isCleanupDisabled = serverConfig.backupTTL.value == 0
+        if (isCleanupDisabled) {
+            return
+        }
+
+        val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
+        if (!automatedBackupDir.isDirectory) {
+            return
+        }
+
+        automatedBackupDir.listFiles { file -> file.name.startsWith(Backup.getBasename(AUTO_BACKUP_FILENAME)) }?.forEach { file ->
+            try {
+                cleanupAutomatedBackupFile(file)
+            } catch (_: Exception) {
+                // ignore, will be retried on next cleanup
+            }
+        }
+    }
+
+    private fun cleanupAutomatedBackupFile(file: File) {
+        if (!file.isFile) {
+            return
+        }
+
+        val lastAccessTime = file.lastModified()
+        val isTTLReached =
+            System.currentTimeMillis() - lastAccessTime >=
+                serverConfig.backupTTL.value.days
+                    .coerceAtLeast(1.days)
+                    .inWholeMilliseconds
+        if (isTTLReached) {
+            file.delete()
+        }
+    }
+
+    fun createBackup(
+        userId: Int,
+        flags: BackupFlags,
+    ): InputStream {
+        // Create root object
+        val backup: Backup =
+            transaction {
+                val backupMangas = BackupMangaHandler.backup(userId, flags)
+                Backup(
+                    backupMangas,
+                    BackupCategoryHandler.backup(userId, flags),
+                    BackupSourceHandler.backup(userId, backupMangas, flags),
+                    BackupGlobalMetaHandler.backup(userId, flags),
+                    BackupSettingsHandler.backup(flags),
+                    BackupUserSettingsHandler.backup(flags, userId),
+                    backupSourcePreferences = BackupPreferenceHandler.backup(flags),
+                )
+            }
+
+        val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+
+        val byteStream = Buffer()
+        (byteStream as Sink)
+            .gzip()
+            .buffer()
+            .use { it.write(byteArray) }
+
+        return byteStream.inputStream()
+    }
+
+    // --- fork: tracked asynchronous backup creation (mirrors the restore state machinery) ---
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     sealed class BackupCreateState {
         data object Idle : BackupCreateState()
 
@@ -120,141 +280,15 @@ object ProtoBackupExport : ProtoBackupBase() {
         )
     }
 
-    init {
-        serverConfig.subscribeTo(
-            combine(serverConfig.backupInterval, serverConfig.backupTime) { interval, timeOfDay ->
-                Pair(
-                    interval,
-                    timeOfDay,
-                )
-            },
-            ::scheduleAutomatedBackupTask,
-        )
-    }
-
-    @OptIn(DelicateCoroutinesApi::class)
-    fun scheduleAutomatedBackupTask() {
-        HAScheduler.descheduleCron(backupSchedulerJobId)
-
-        val areAutomatedBackupsDisabled = serverConfig.backupInterval.value == 0
-        if (areAutomatedBackupsDisabled) {
-            return
-        }
-
-        val task = {
-            try {
-                cleanupAutomatedBackups()
-                createAutomatedBackup()
-                preferences.edit().putLong(LAST_AUTOMATED_BACKUP_KEY, System.currentTimeMillis()).apply()
-            } catch (e: Exception) {
-                logger.error(e) { "scheduleAutomatedBackupTask: failed due to" }
-            }
-        }
-
-        val (backupHour, backupMinute) =
-            serverConfig.backupTime.value
-                .split(":")
-                .map { it.toInt() }
-        val backupInterval = serverConfig.backupInterval.value.days
-
-        // trigger last backup in case the server wasn't running on the scheduled time
-        val lastAutomatedBackup = preferences.getLong(LAST_AUTOMATED_BACKUP_KEY, 0)
-        val wasPreviousBackupTriggered =
-            (System.currentTimeMillis() - lastAutomatedBackup) < backupInterval.inWholeMilliseconds
-        if (!wasPreviousBackupTriggered) {
-            GlobalScope.launch(Dispatchers.IO) {
-                task()
-            }
-        }
-
-        backupSchedulerJobId = HAScheduler.scheduleCron(task, "$backupMinute $backupHour */${backupInterval.inWholeDays} * *", "backup")
-    }
-
-    private fun createAutomatedBackup() {
-        logger.info { "Creating automated backup..." }
-
-        // use async wrapper so the automated backup is tracked and does not block scheduler
-        createBackupAsync(BackupFlags.fromServerConfig())
-    }
-
-    private fun cleanupAutomatedBackups() {
-        logger.debug { "Cleanup automated backups (ttl= ${serverConfig.backupTTL.value})" }
-
-        val isCleanupDisabled = serverConfig.backupTTL.value == 0
-        if (isCleanupDisabled) {
-            return
-        }
-
-        val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
-        if (!automatedBackupDir.isDirectory) {
-            return
-        }
-
-        automatedBackupDir.listFiles { file -> file.name.startsWith(Backup.getBasename(AUTO_BACKUP_FILENAME)) }?.forEach { file ->
-            try {
-                cleanupAutomatedBackupFile(file)
-            } catch (_: Exception) {
-                // ignore, will be retried on next cleanup
-            }
-        }
-    }
-
-    private fun cleanupAutomatedBackupFile(file: File) {
-        if (!file.isFile) {
-            return
-        }
-
-        val lastAccessTime = file.lastModified()
-        val isTTLReached =
-            System.currentTimeMillis() - lastAccessTime >=
-                serverConfig.backupTTL.value.days
-                    .coerceAtLeast(1.days)
-                    .inWholeMilliseconds
-        if (isTTLReached) {
-            file.delete()
-        }
-    }
+    // serializes create jobs (mirrors import)
+    private val createMutex = Mutex()
 
     /**
-     * Synchronous creation (kept for compatibility).
-     * Returns InputStream with gzipped proto bytes — unchanged behavior.
+     * Creates a tracked create job that writes the backup into the automated backup folder.
+     * Returns the id of the creation job, see [getCreateState].
      */
-    fun createBackup(flags: BackupFlags): InputStream {
-        // Create root object
-
-        val backupMangas = BackupMangaHandler.backup(flags)
-        val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
-
-        val backup: Backup =
-            transaction {
-                Backup(
-                    BackupMangaHandler.backup(flags),
-                    BackupCategoryHandler.backup(flags),
-                    BackupSourceHandler.backup(backupMangas, flags),
-                    emptyList(),
-                    backupSourcePreferences,
-                    BackupGlobalMetaHandler.backup(flags),
-                    BackupSettingsHandler.backup(flags),
-                )
-            }
-
-        val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-
-        val byteStream = Buffer()
-        (byteStream as Sink)
-            .gzip()
-            .buffer()
-            .use { it.write(byteArray) }
-
-        return byteStream.inputStream()
-    }
-
-    /**
-     * Asynchronous wrapper modeled after ProtoBackupImport pattern, but with 'create' naming.
-     * Creates a tracked create job and writes it to a file. Returns an id for the creation job.
-     */
-    @OptIn(DelicateCoroutinesApi::class)
     fun createBackupAsync(
+        userId: Int,
         flags: BackupFlags,
     ): String {
         val createId = System.currentTimeMillis().toString()
@@ -263,14 +297,11 @@ object ProtoBackupExport : ProtoBackupBase() {
 
         updateCreateState(createId, BackupCreateState.Idle)
 
-        // Launch work on our scope; serialize via createMutex to mirror import
         scope.launch {
             createMutex.withLock {
                 try {
                     logger.info { "createBackupAsync($createId): creating..." }
-                    updateCreateState(createId, BackupCreateState.Idle)
-
-                    performCreate(createId, flags)
+                    performCreate(createId, userId, flags)
                 } catch (e: Exception) {
                     logger.error(e) { "createBackupAsync($createId): failed due to" }
                     updateCreateState(createId, BackupCreateState.Failure)
@@ -284,73 +315,69 @@ object ProtoBackupExport : ProtoBackupBase() {
         return createId
     }
 
-    // A private mutex to serialize create jobs (mirrors import)
-    private val createMutex = Mutex()
-
     private fun performCreate(
         id: String,
+        userId: Int,
         flags: BackupFlags,
     ) {
         val t0 = System.currentTimeMillis()
 
-        // Stage: fetching / building backup mangas (we pass a progress lambda that updates per-manga)
         updateCreateState(id, BackupCreateState.CreatingSettings(0, 0))
 
         val backupMangas =
-            BackupMangaHandler.backup(flags) { current, total, title ->
-                updateCreateState(id, BackupCreateState.CreatingManga(current, total, title))
+            transaction {
+                BackupMangaHandler.backup(userId, flags) { current, total, title ->
+                    updateCreateState(id, BackupCreateState.CreatingManga(current, total, title))
+                }
             }
         logger.info { "performCreate($id): manga stage done in ${System.currentTimeMillis() - t0}ms (${backupMangas.size} manga)" }
 
         updateCreateState(id, BackupCreateState.CreatingCategories(0, backupMangas.size))
 
-        // other pieces of client data
         if (flags.includeClientData) {
             updateCreateState(id, BackupCreateState.CreatingMeta(0, backupMangas.size))
         }
-
-        // Build remaining parts and serialize; after this no DB connection is held during assembly/serialization
-        val backupSourcePreferences = BackupPreferenceHandler.backup(flags)
 
         val backup: Backup =
             transaction {
                 Backup(
                     backupMangas,
-                    BackupCategoryHandler.backup(flags),
-                    BackupSourceHandler.backup(backupMangas, flags),
-                    emptyList(),
-                    backupSourcePreferences,
-                    BackupGlobalMetaHandler.backup(flags),
+                    BackupCategoryHandler.backup(userId, flags),
+                    BackupSourceHandler.backup(userId, backupMangas, flags),
+                    BackupGlobalMetaHandler.backup(userId, flags),
                     BackupSettingsHandler.backup(flags),
+                    BackupUserSettingsHandler.backup(flags, userId),
+                    backupSourcePreferences = BackupPreferenceHandler.backup(flags),
                 )
             }
 
         // serialize & gzip
-        updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size)) // reuse as "serializing"
+        updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size))
         val byteArray: ByteArray
-        val serializeMs = measureTimeMillis {
-            byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
-        }
+        val serializeMs =
+            measureTimeMillis {
+                byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+            }
         val byteStream = Buffer()
-        val gzipMs = measureTimeMillis {
-            (byteStream as Sink)
-                .gzip()
-                .buffer()
-                .use { it.write(byteArray) }
-        }
+        val gzipMs =
+            measureTimeMillis {
+                (byteStream as Sink)
+                    .gzip()
+                    .buffer()
+                    .use { it.write(byteArray) }
+            }
         logger.info { "performCreate($id): serialize=${serializeMs}ms (${byteArray.size} bytes raw), gzip=${gzipMs}ms" }
 
-        // write to file
         try {
             val automatedBackupDir = File(applicationDirs.automatedBackupRoot)
             automatedBackupDir.mkdirs()
 
             val backupFile = File(applicationDirs.automatedBackupRoot, Backup.getFilename(AUTO_BACKUP_FILENAME + "_$id"))
 
-            updateCreateState(id, BackupCreateState.CreatingSettings(0, backupMangas.size))
-            val writeMs = measureTimeMillis {
-                backupFile.outputStream().use { output -> byteStream.inputStream().copyTo(output) }
-            }
+            val writeMs =
+                measureTimeMillis {
+                    backupFile.outputStream().use { output -> byteStream.inputStream().copyTo(output) }
+                }
             logger.info { "performCreate($id): file write=${writeMs}ms, total wall time=${System.currentTimeMillis() - t0}ms" }
 
             updateCreateState(id, BackupCreateState.Success)

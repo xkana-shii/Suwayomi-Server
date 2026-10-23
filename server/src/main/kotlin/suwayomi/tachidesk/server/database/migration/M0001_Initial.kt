@@ -88,7 +88,6 @@ class M0001_Initial : AddTableMigration() {
 
             bool("read").default(false)
             bool("bookmark").default(false)
-            bool("fillermark").default(false)
             integer("last_page_read").default(0)
 
             integer("number_in_list")

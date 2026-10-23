@@ -3,6 +3,8 @@
 package suwayomi.tachidesk.graphql.mutations
 
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.http.UploadedFile
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
@@ -23,12 +25,14 @@ import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupImport
 import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupValidator
 import suwayomi.tachidesk.manga.impl.backup.proto.models.Backup
 import suwayomi.tachidesk.manga.impl.extension.Extension
+import suwayomi.tachidesk.manga.impl.extension.ExtensionStoreService
 import suwayomi.tachidesk.manga.impl.extension.ExtensionsList
-import suwayomi.tachidesk.manga.impl.extension.github.ExtensionGithubApi
-import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
+import suwayomi.tachidesk.manga.model.dataclass.ExtensionInfo
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import suwayomi.tachidesk.server.JavalinSetup.future
-import suwayomi.tachidesk.server.serverConfig
+import suwayomi.tachidesk.server.user.ForbiddenException
+import suwayomi.tachidesk.server.user.UserPermission
+import suwayomi.tachidesk.server.user.hasPermission
 import java.util.concurrent.CompletableFuture
 import kotlin.time.Duration.Companion.seconds
 
@@ -38,6 +42,8 @@ import kotlin.time.Duration.Companion.seconds
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+private val logger = KotlinLogging.logger {}
 
 class BackupMutation {
     data class RestoreBackupInput(
@@ -53,12 +59,17 @@ class BackupMutation {
     )
 
     @RequireAuth
-    fun restoreBackup(input: RestoreBackupInput): CompletableFuture<RestoreBackupPayload> {
+    fun restoreBackup(
+        @GraphQLIgnore
+        userId: Int,
+        input: RestoreBackupInput,
+    ): CompletableFuture<RestoreBackupPayload> {
         val (clientMutationId, backup, flags) = input
 
         return future {
             val restoreId =
                 ProtoBackupImport.restore(
+                    userId,
                     backup.content(),
                     BackupFlags.fromPartial(flags),
                 )
@@ -97,9 +108,17 @@ class BackupMutation {
 
     @RequireAuth
     fun installMissingExtensionsFromBackup(
+        @GraphQLIgnore
+        userId: Int,
+        @GraphQLIgnore
+        permissions: List<UserPermission>,
         input: InstallMissingExtensionsFromBackupInput,
     ): CompletableFuture<InstallMissingExtensionsFromBackupPayload> {
         val (clientMutationId, backupFile) = input
+
+        if (!permissions.hasPermission(UserPermission.INSTALL_EXTENSIONS)) {
+            throw ForbiddenException()
+        }
 
         return future {
             val backupBytes =
@@ -107,7 +126,7 @@ class BackupMutation {
                     .content()
                     .use { inputStream -> inputStream.readBytes() }
 
-            val validationResult = ProtoBackupValidator.validate(backupBytes.inputStream())
+            val validationResult = ProtoBackupValidator.validate(userId, backupBytes.inputStream())
             val missingSources = validationResult.missingSourceIds
 
             if (missingSources.isEmpty()) {
@@ -125,13 +144,11 @@ class BackupMutation {
             val missingSourceIds = missingSources.map { it.id }.toSet()
 
             val onlineExtensions =
-                serverConfig.extensionRepos.value
-                    .map { repo ->
-                        kotlin.runCatching {
-                            ExtensionGithubApi.findExtensions(repo.repoUrlReplace())
-                        }
-                    }.mapNotNull { it.getOrNull() }
-                    .flatten()
+                ExtensionStoreService.getAndRefresh().flatMap { store ->
+                    runCatching { ExtensionStoreService.getExtensions(store) }
+                        .onFailure { logger.warn(it) { "Failed to fetch extensions for store: ${store.indexUrl}" } }
+                        .getOrDefault(emptyList())
+                }
 
             val matchedExtensionsByPkgName =
                 onlineExtensions
@@ -164,7 +181,7 @@ class BackupMutation {
             val matchedSourceIds =
                 matchedExtensionsByPkgName
                     .values
-                    .flatMap(OnlineExtension::sources)
+                    .flatMap(ExtensionInfo::sources)
                     .map { it.id }
                     .toSet()
 
@@ -212,37 +229,16 @@ class BackupMutation {
     )
 
     @RequireAuth
-    fun createBackup(input: CreateBackupInput? = null): CreateBackupPayload {
+    fun createBackup(
+        @GraphQLIgnore
+        userId: Int,
+        @GraphQLIgnore
+        permissions: List<UserPermission>,
+        input: CreateBackupInput? = null,
+    ): CreateBackupPayload {
         val filename = Backup.getFilename()
 
-        val backup =
-            ProtoBackupExport.createBackup(
-                if (input?.flags != null) {
-                    BackupFlags.fromPartial(input.flags)
-                } else {
-                    BackupFlags(
-                        includeManga = BackupFlags.DEFAULT.includeManga,
-                        includeCategories =
-                            input?.includeCategories
-                                ?: BackupFlags.DEFAULT.includeCategories,
-                        includeChapters =
-                            input?.includeChapters
-                                ?: BackupFlags.DEFAULT.includeChapters,
-                        includeTracking =
-                            input?.includeTracking
-                                ?: BackupFlags.DEFAULT.includeTracking,
-                        includeHistory =
-                            input?.includeHistory
-                                ?: BackupFlags.DEFAULT.includeHistory,
-                        includeClientData =
-                            input?.includeClientData
-                                ?: BackupFlags.DEFAULT.includeClientData,
-                        includeServerSettings =
-                            input?.includeServerSettings
-                                ?: BackupFlags.DEFAULT.includeServerSettings,
-                    )
-                },
-            )
+        val backup = ProtoBackupExport.createBackup(userId, getEffectiveBackupFlags(permissions, input))
 
         TemporaryFileStorage.saveFile(filename, backup)
 
@@ -257,30 +253,17 @@ class BackupMutation {
     )
 
     @RequireAuth
-    fun createBackupAsync(input: CreateBackupInput? = null): CompletableFuture<CreateBackupAsyncPayload> {
-        val flags =
-            if (input?.flags != null) {
-                BackupFlags.fromPartial(input.flags)
-            } else {
-                BackupFlags(
-                    includeManga = BackupFlags.DEFAULT.includeManga,
-                    includeCategories =
-                        input?.includeCategories
-                            ?: BackupFlags.DEFAULT.includeCategories,
-                    includeChapters = input?.includeChapters ?: BackupFlags.DEFAULT.includeChapters,
-                    includeTracking = input?.includeTracking ?: BackupFlags.DEFAULT.includeTracking,
-                    includeHistory = input?.includeHistory ?: BackupFlags.DEFAULT.includeHistory,
-                    includeClientData =
-                        input?.includeClientData
-                            ?: BackupFlags.DEFAULT.includeClientData,
-                    includeServerSettings =
-                        input?.includeServerSettings
-                            ?: BackupFlags.DEFAULT.includeServerSettings,
-                )
-            }
+    fun createBackupAsync(
+        @GraphQLIgnore
+        userId: Int,
+        @GraphQLIgnore
+        permissions: List<UserPermission>,
+        input: CreateBackupInput? = null,
+    ): CompletableFuture<CreateBackupAsyncPayload> {
+        val flags = getEffectiveBackupFlags(permissions, input)
 
         return future {
-            val createId = ProtoBackupExport.createBackupAsync(flags)
+            val createId = ProtoBackupExport.createBackupAsync(userId, flags)
 
             withTimeout(10.seconds) {
                 ProtoBackupExport.createNotifyFlow.first {
@@ -297,14 +280,30 @@ class BackupMutation {
     }
 }
 
-private fun String.repoUrlReplace(): String =
-    if (contains("github")) {
-        replace(Regex("""https://github\.com/([^/]+)/([^/]+)(?:/tree/([^/]+))?(?:/(.+))?""")) {
-            "https://raw.githubusercontent.com/${it.groupValues[1]}/${it.groupValues[2]}/" +
-                (it.groupValues.getOrNull(3)?.ifBlank { null } ?: "repo") +
-                "/" +
-                (it.groupValues.getOrNull(4)?.ifBlank { null } ?: "index.min.json")
+private fun getEffectiveBackupFlags(
+    permissions: List<UserPermission>,
+    input: BackupMutation.CreateBackupInput?,
+): BackupFlags {
+    val backupFlags =
+        if (input?.flags != null) {
+            BackupFlags.fromPartial(input.flags)
+        } else {
+            BackupFlags(
+                includeManga = BackupFlags.DEFAULT.includeManga,
+                includeCategories = input?.includeCategories ?: BackupFlags.DEFAULT.includeCategories,
+                includeChapters = input?.includeChapters ?: BackupFlags.DEFAULT.includeChapters,
+                includeTracking = input?.includeTracking ?: BackupFlags.DEFAULT.includeTracking,
+                includeHistory = input?.includeHistory ?: BackupFlags.DEFAULT.includeHistory,
+                includeClientData = input?.includeClientData ?: BackupFlags.DEFAULT.includeClientData,
+                includeServerSettings = input?.includeServerSettings ?: BackupFlags.DEFAULT.includeServerSettings,
+                includeUserSettings = BackupFlags.DEFAULT.includeUserSettings,
+            )
         }
+
+    // users without the MANAGE_SETTINGS permission may not export the global server settings
+    return if (permissions.hasPermission(UserPermission.MANAGE_SETTINGS)) {
+        backupFlags
     } else {
-        this
+        backupFlags.copy(includeServerSettings = false)
     }
+}

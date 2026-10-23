@@ -1,9 +1,13 @@
 package suwayomi.tachidesk.graphql.types
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
+import com.expediagroup.graphql.server.extensions.getValuesFromDataLoader
 import graphql.schema.DataFetchingEnvironment
+import suwayomi.tachidesk.graphql.types.CategoryNodeList.Companion.toNodeList
+import suwayomi.tachidesk.graphql.types.MangaNodeList.Companion.toNodeList
 import suwayomi.tachidesk.manga.impl.update.CategoryUpdateJob
 import suwayomi.tachidesk.manga.impl.update.CategoryUpdateStatus
 import suwayomi.tachidesk.manga.impl.update.JobStatus
@@ -81,10 +85,11 @@ class UpdateStatusType(
             }
         }
 
-        return dataFetchingEnvironment.getValueFromDataLoader<List<Int>, MangaNodeList>(
-            "MangaForIdsDataLoader",
-            mangaIds,
-        )
+        return dataFetchingEnvironment
+            .getValuesFromDataLoader<Int, MangaType>(
+                "MangaDataLoader",
+                mangaIds,
+            ).thenApply { it.toNodeList() }
     }
 }
 
@@ -93,7 +98,7 @@ class UpdateStatusCategoryType(
     val categoryIds: List<Int>,
 ) {
     fun categories(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<CategoryNodeList> =
-        dataFetchingEnvironment.getValueFromDataLoader("CategoryForIdsDataLoader", categoryIds)
+        dataFetchingEnvironment.getValuesFromDataLoader<Int, CategoryType>("CategoryDataLoader", categoryIds).thenApply { it.toNodeList() }
 }
 
 class LibraryUpdateStatus(
@@ -130,11 +135,11 @@ enum class CategoryJobStatus {
 
 class MangaUpdateType(
     @get:GraphQLIgnore
-    val manga: MangaType,
+    val mangaId: Int,
     val status: MangaJobStatus,
 ) {
     constructor(job: UpdateJob) : this(
-        MangaType(job.manga),
+        job.manga.id,
         when (job.status) {
             JobStatus.PENDING -> MangaJobStatus.PENDING
             JobStatus.RUNNING -> MangaJobStatus.RUNNING
@@ -148,10 +153,10 @@ class MangaUpdateType(
         // Clearing the data loader cache here everytime should be fine, because a manga gets sent only once for each status
         val clearCache = status === MangaJobStatus.COMPLETE || status === MangaJobStatus.FAILED
         if (clearCache) {
-            MangaType.clearCacheFor(manga.id, dataFetchingEnvironment)
+            MangaType.clearCacheFor(mangaId, dataFetchingEnvironment)
         }
 
-        return dataFetchingEnvironment.getValueFromDataLoader("MangaDataLoader", manga.id)
+        return dataFetchingEnvironment.getValueFromDataLoader("MangaDataLoader", mangaId)
     }
 }
 
@@ -183,13 +188,14 @@ data class UpdaterUpdates(
     @GraphQLDescription("The current update status at the time of sending the initial message. Is null for all following messages")
     val initial: LibraryUpdateStatus?,
     val jobsInfo: UpdaterJobsInfoType,
+    @GraphQLDeprecated("Removed - has no effect anymore, is always false")
     @GraphQLDescription(
         "Indicates whether updates have been omitted based on the \"maxUpdates\" subscription variable. " +
             "In case updates have been omitted, the \"updateStatus\" query should be re-fetched.",
     )
-    val omittedUpdates: Boolean,
+    val omittedUpdates: Boolean = false,
 ) {
-    constructor(updates: UpdateUpdates, omittedUpdates: Boolean) : this(
+    constructor(updates: UpdateUpdates) : this(
         categoryUpdates = updates.categoryUpdates.map(::CategoryUpdateType),
         mangaUpdates = updates.mangaUpdates.map(::MangaUpdateType),
         initial = updates.initial?.let { LibraryUpdateStatus(updates.initial) },
@@ -201,6 +207,5 @@ data class UpdaterUpdates(
                 skippedCategoriesCount = updates.skippedCategoriesCount,
                 skippedMangasCount = updates.skippedMangasCount,
             ),
-        omittedUpdates = omittedUpdates,
     )
 }

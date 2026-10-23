@@ -1,9 +1,8 @@
 package suwayomi.tachidesk.graphql.types
 
-import kotlinx.coroutines.flow.first
 import suwayomi.tachidesk.manga.impl.backup.IBackupFlags
-import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupImport
 import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupExport
+import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupImport
 
 /*
  * Copyright (C) Contributors to the Suwayomi project
@@ -21,6 +20,7 @@ data class PartialBackupFlags(
     override val includeHistory: Boolean?,
     override val includeClientData: Boolean?,
     override val includeServerSettings: Boolean?,
+    override val includeUserSettings: Boolean?,
 ) : IBackupFlags
 
 enum class BackupRestoreState {
@@ -31,6 +31,7 @@ enum class BackupRestoreState {
     RESTORING_MANGA,
     RESTORING_META,
     RESTORING_SETTINGS,
+    RESTORING_USER_SETTINGS,
 }
 
 data class BackupRestoreStatus(
@@ -89,6 +90,14 @@ fun ProtoBackupImport.BackupRestoreState.toStatus(): BackupRestoreStatus =
             )
         }
 
+        is ProtoBackupImport.BackupRestoreState.RestoringUserSettings -> {
+            BackupRestoreStatus(
+                state = BackupRestoreState.RESTORING_USER_SETTINGS,
+                totalManga = totalManga,
+                mangaProgress = current,
+            )
+        }
+
         is ProtoBackupImport.BackupRestoreState.RestoringManga -> {
             BackupRestoreStatus(
                 state = BackupRestoreState.RESTORING_MANGA,
@@ -132,7 +141,12 @@ fun ProtoBackupExport.BackupCreateState.toCreateStatus(): BackupCreateStatus =
         }
 
         is ProtoBackupExport.BackupCreateState.CreatingCategories -> {
-            BackupCreateStatus(state = BackupCreateState.CREATING_CATEGORIES, totalManga = totalManga, mangaProgress = current, title = null)
+            BackupCreateStatus(
+                state = BackupCreateState.CREATING_CATEGORIES,
+                totalManga = totalManga,
+                mangaProgress = current,
+                title = null,
+            )
         }
 
         is ProtoBackupExport.BackupCreateState.CreatingMeta -> {

@@ -14,7 +14,8 @@ import org.dataloader.DataLoaderFactory
 import org.jetbrains.exposed.v1.core.Slf4jSqlDebugLogger
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.selectAll
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
+import suwayomi.tachidesk.graphql.server.primitives.inIds
 import suwayomi.tachidesk.graphql.types.SourceNodeList
 import suwayomi.tachidesk.graphql.types.SourceNodeList.Companion.toNodeList
 import suwayomi.tachidesk.graphql.types.SourceType
@@ -28,12 +29,12 @@ class SourceDataLoader : KotlinDataLoader<Long, SourceType> {
     override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Long, SourceType> =
         DataLoaderFactory.newDataLoader { ids ->
             future {
-                transaction {
+                suspendTransaction {
                     addLogger(Slf4jSqlDebugLogger)
                     val source =
                         SourceTable
                             .selectAll()
-                            .where { SourceTable.id inList ids }
+                            .where { SourceTable.id inIds ids }
                             .mapNotNull { SourceType(it) }
                             .associateBy { it.id }
                     ids.map { source[it] }
@@ -48,7 +49,7 @@ class SourcesForExtensionDataLoader : KotlinDataLoader<String, SourceNodeList> {
     override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<String, SourceNodeList> =
         DataLoaderFactory.newDataLoader { ids ->
             future {
-                transaction {
+                suspendTransaction {
                     addLogger(Slf4jSqlDebugLogger)
 
                     val sourcesByExtensionPkg =

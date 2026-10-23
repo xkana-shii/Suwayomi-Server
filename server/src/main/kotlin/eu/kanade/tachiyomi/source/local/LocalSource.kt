@@ -30,12 +30,15 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.storage.EpubFile
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
@@ -48,7 +51,7 @@ import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertAndGetId
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.registerCatalogueSource
+import suwayomi.tachidesk.manga.impl.util.source.GetSource.registerSource
 import suwayomi.tachidesk.manga.impl.util.storage.ImageUtil
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
@@ -174,8 +177,20 @@ class LocalSource(
         return MangasPage(mangas.toList(), false)
     }
 
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate =
+        supervisorScope {
+            val asyncManga = if (fetchDetails) async { getMangaDetails(manga) } else null
+            val asyncChapters = if (fetchChapters) async { getChapterList(manga) } else null
+            SMangaUpdate(asyncManga?.await() ?: manga, asyncChapters?.await() ?: chapters)
+        }
+
     // Manga details related
-    override suspend fun getMangaDetails(manga: SManga): SManga =
+    private suspend fun getMangaDetails(manga: SManga): SManga =
         withContext(Dispatchers.IO) {
             coverManager.find(manga.url)?.let {
                 manga.thumbnail_url = it.absolutePath
@@ -296,12 +311,13 @@ class LocalSource(
     }
 
     // Chapters
-    override suspend fun getChapterList(manga: SManga): List<SChapter> =
+    private suspend fun getChapterList(manga: SManga): List<SChapter> =
         fileSystem
             .getFilesInMangaDirectory(manga.url)
             // Only keep supported formats
             .filterNot { it.name.orEmpty().startsWith('.') }
             .filter { it.isDirectory || Archive.isSupported(it) }
+            .filterNot { it.name.equals("@eaDir") }
             .map { chapterFile ->
                 SChapter.create().apply {
                     url = "${manga.url}/${chapterFile.name}"
@@ -392,7 +408,10 @@ class LocalSource(
      * Non-fatal: any parsing error is logged by caller; this function can throw to allow caller to log context.
      */
     @OptIn(ExperimentalXmlUtilApi::class)
-    private fun applyComicInfoToChapterIfPresent(chapterFile: File, chapter: SChapter) {
+    private fun applyComicInfoToChapterIfPresent(
+        chapterFile: File,
+        chapter: SChapter,
+    ) {
         try {
             if (chapterFile.isDirectory) {
                 val ci = File(chapterFile, COMIC_INFO_FILE)
@@ -410,10 +429,11 @@ class LocalSource(
                 // Zip/CBZ
                 if (lowerName.endsWith(".zip") || lowerName.endsWith(".cbz")) {
                     ZipFile.builder().setFile(chapterFile).get().use { zip ->
-                        val entry = zip.getEntry(COMIC_INFO_FILE)
-                            ?: zip.entries
-                                .toList()
-                                .firstOrNull { it.name.equals(COMIC_INFO_FILE, ignoreCase = true) }
+                        val entry =
+                            zip.getEntry(COMIC_INFO_FILE)
+                                ?: zip.entries
+                                    .toList()
+                                    .firstOrNull { it.name.equals(COMIC_INFO_FILE, ignoreCase = true) }
 
                         if (entry != null) {
                             zip.getInputStream(entry).use { entryStream ->
@@ -428,8 +448,9 @@ class LocalSource(
                 } else if (lowerName.endsWith(".rar") || lowerName.endsWith(".cbr")) {
                     // RAR/CBR: use JunrarArchive (already available in the repo)
                     JunrarArchive(chapterFile).use { rar ->
-                        val header = rar.fileHeaders
-                            .firstOrNull { it.fileName.equals(COMIC_INFO_FILE, ignoreCase = true) }
+                        val header =
+                            rar.fileHeaders
+                                .firstOrNull { it.fileName.equals(COMIC_INFO_FILE, ignoreCase = true) }
 
                         if (header != null) {
                             rar.getInputStream(header).use { entryStream ->
@@ -551,7 +572,8 @@ class LocalSource(
                             it[versionName] = "1.2"
                             it[versionCode] = 0
                             it[lang] = LANG
-                            it[isNsfw] = false
+                            it[extensionLib] = "1.2"
+                            it[contentWarning] = 0
                             it[isInstalled] = true
                         }
 
@@ -560,13 +582,12 @@ class LocalSource(
                         it[name] = NAME
                         it[lang] = LANG
                         it[extension] = extensionId
-                        it[isNsfw] = false
                     }
                 }
             }
 
             val fs = LocalSourceFileSystem(applicationDirs)
-            registerCatalogueSource(ID to LocalSource(fs, LocalCoverManager(fs)))
+            registerSource(ID to LocalSource(fs, LocalCoverManager(fs)))
         }
     }
 }

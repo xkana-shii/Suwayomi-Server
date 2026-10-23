@@ -21,12 +21,11 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
-import suwayomi.tachidesk.manga.impl.extension.Extension.getExtensionIconUrl
-import suwayomi.tachidesk.manga.impl.extension.github.ExtensionGithubApi
-import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
+import suwayomi.tachidesk.manga.impl.extension.Extension.proxyExtensionIconUrl
+import suwayomi.tachidesk.manga.model.dataclass.ContentWarning
 import suwayomi.tachidesk.manga.model.dataclass.ExtensionDataClass
+import suwayomi.tachidesk.manga.model.dataclass.ExtensionInfo
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
-import suwayomi.tachidesk.server.serverConfig
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
@@ -34,23 +33,23 @@ object ExtensionsList {
     private val logger = KotlinLogging.logger {}
 
     var lastUpdateCheck: Long = 0
-    var updateMap = ConcurrentHashMap<String, OnlineExtension>()
+    var updateMap = ConcurrentHashMap<String, ExtensionInfo>()
 
     suspend fun fetchExtensions() {
-        // update if 60 seconds has passed or requested offline and database is empty
-        val extensions =
-            serverConfig.extensionRepos.value.map { repo ->
-                kotlin
-                    .runCatching {
-                        ExtensionGithubApi.findExtensions(repo.repoUrlReplace())
-                    }.onFailure {
-                        logger.warn(it) {
-                            "Failed to fetch extensions for repo: $repo"
-                        }
-                    }
+        val allExtensions = mutableListOf<ExtensionInfo>()
+
+        ExtensionStoreService.getAndRefresh().forEach { store ->
+            try {
+                val extensions = ExtensionStoreService.getExtensions(store)
+                allExtensions.addAll(extensions)
+            } catch (e: Exception) {
+                logger.warn(e) {
+                    "Failed to fetch extensions for store: ${store.indexUrl}"
+                }
             }
-        val foundExtensions = extensions.mapNotNull { it.getOrNull() }.flatten()
-        updateExtensionDatabase(foundExtensions)
+        }
+
+        updateExtensionDatabase(allExtensions)
     }
 
     suspend fun fetchExtensionsCached() {
@@ -74,25 +73,25 @@ object ExtensionsList {
         transaction {
             ExtensionTable.selectAll().filter { it[ExtensionTable.name] != LocalSource.EXTENSION_NAME }.map {
                 ExtensionDataClass(
-                    it[ExtensionTable.repo],
-                    it[ExtensionTable.apkName],
-                    getExtensionIconUrl(it[ExtensionTable.apkName]),
-                    it[ExtensionTable.name],
-                    it[ExtensionTable.pkgName],
-                    it[ExtensionTable.versionName],
-                    it[ExtensionTable.versionCode],
-                    it[ExtensionTable.lang],
-                    it[ExtensionTable.isNsfw],
-                    it[ExtensionTable.isInstalled],
-                    it[ExtensionTable.hasUpdate],
-                    it[ExtensionTable.isObsolete],
+                    repo = it[ExtensionTable.storeIndexUrl],
+                    apkName = it[ExtensionTable.apkName].orEmpty(),
+                    iconUrl = proxyExtensionIconUrl(it[ExtensionTable.pkgName]),
+                    name = it[ExtensionTable.name],
+                    pkgName = it[ExtensionTable.pkgName],
+                    versionName = it[ExtensionTable.versionName],
+                    versionCode = it[ExtensionTable.versionCode].toInt(),
+                    lang = it[ExtensionTable.lang],
+                    isNsfw = it[ExtensionTable.contentWarning] >= ContentWarning.MIXED.ordinal,
+                    installed = it[ExtensionTable.isInstalled],
+                    hasUpdate = it[ExtensionTable.hasUpdate],
+                    obsolete = it[ExtensionTable.isObsolete],
                 )
             }
         }
 
     private val updateExtensionDatabaseMutex = Mutex()
 
-    private suspend fun updateExtensionDatabase(foundExtensions: List<OnlineExtension>) {
+    private suspend fun updateExtensionDatabase(foundExtensions: List<ExtensionInfo>) {
         updateExtensionDatabaseMutex.withLock {
             transaction {
                 val uniqueExtensions =
@@ -106,12 +105,14 @@ object ExtensionsList {
                         .selectAll()
                         .toList()
                         .associateBy { it[ExtensionTable.pkgName] }
-                val extensionsToUpdate = mutableListOf<Pair<OnlineExtension, ResultRow>>()
-                val extensionsToInsert = mutableListOf<OnlineExtension>()
+
+                val extensionsToUpdate = mutableListOf<Pair<ExtensionInfo, ResultRow>>()
+                val extensionsToInsert = mutableListOf<ExtensionInfo>()
                 val extensionsToDelete =
-                    installedExtensions.filter { it.value[ExtensionTable.repo] != null }.mapNotNull { (pkgName, extension) ->
+                    installedExtensions.filter { it.value[ExtensionTable.storeIndexUrl] != null }.mapNotNull { (pkgName, extension) ->
                         extension.takeUnless { uniqueExtensions.any { it.pkgName == pkgName } }
                     }
+
                 uniqueExtensions.forEach {
                     val extension = installedExtensions[it.pkgName]
                     if (extension != null) {
@@ -120,10 +121,12 @@ object ExtensionsList {
                         extensionsToInsert.add(it)
                     }
                 }
+
                 if (extensionsToUpdate.isNotEmpty()) {
                     val extensionsInstalled =
                         extensionsToUpdate
                             .groupBy { it.second[ExtensionTable.isInstalled] }
+
                     val installedExtensionsToUpdate = extensionsInstalled[true].orEmpty()
                     if (installedExtensionsToUpdate.isNotEmpty()) {
                         BatchUpdateStatement(ExtensionTable)
@@ -132,10 +135,17 @@ object ExtensionsList {
                                     addBatch(EntityID(extensionRecord[ExtensionTable.id].value, ExtensionTable))
                                     // Always update icon url and repo
                                     this[ExtensionTable.iconUrl] = foundExtension.iconUrl
-                                    this[ExtensionTable.repo] = foundExtension.repo
+                                    this[ExtensionTable.storeIndexUrl] = foundExtension.storeIndexUrl
+                                    this[ExtensionTable.apkUrl] = foundExtension.apkUrl
+                                    this[ExtensionTable.jarUrl] = foundExtension.jarUrl
 
+                                    // Reset the "hasUpdate" flag to ensure that we have no extensions that are incorrectly marked as updatable
+                                    // This can happen if an extension store has some versionCode mismatch that gets fixed without bumping the actual versionCode.
+                                    // I.e.
+                                    // 1. Extension list update -> causes issue => extensions get incorrectly marked as updatable
+                                    // 2. Extension list update -> fixes issue => incorrectly marked extensions get reset
+                                    this[ExtensionTable.hasUpdate] = false
                                     // add these because batch updates need matching columns
-                                    this[ExtensionTable.hasUpdate] = extensionRecord[ExtensionTable.hasUpdate]
                                     this[ExtensionTable.isObsolete] = extensionRecord[ExtensionTable.isObsolete]
 
                                     // a previously removed extension is now available again
@@ -161,6 +171,7 @@ object ExtensionsList {
                             }.toExecutable()
                             .execute(this@transaction)
                     }
+
                     val extensionsToFullyUpdate = extensionsInstalled[false].orEmpty()
                     if (extensionsToFullyUpdate.isNotEmpty()) {
                         BatchUpdateStatement(ExtensionTable)
@@ -168,29 +179,34 @@ object ExtensionsList {
                                 extensionsToFullyUpdate.forEach { (foundExtension, extensionRecord) ->
                                     addBatch(EntityID(extensionRecord[ExtensionTable.id].value, ExtensionTable))
                                     // extension is not installed, so we can overwrite the data without a care
-                                    this[ExtensionTable.repo] = foundExtension.repo
+                                    this[ExtensionTable.storeIndexUrl] = foundExtension.storeIndexUrl
                                     this[ExtensionTable.name] = foundExtension.name
+                                    this[ExtensionTable.extensionLib] = foundExtension.extensionLib
                                     this[ExtensionTable.versionName] = foundExtension.versionName
                                     this[ExtensionTable.versionCode] = foundExtension.versionCode
                                     this[ExtensionTable.lang] = foundExtension.lang
-                                    this[ExtensionTable.isNsfw] = foundExtension.isNsfw
-                                    this[ExtensionTable.apkName] = foundExtension.apkName
+                                    this[ExtensionTable.contentWarning] = foundExtension.contentWarning.ordinal
+                                    this[ExtensionTable.apkUrl] = foundExtension.apkUrl
+                                    this[ExtensionTable.jarUrl] = foundExtension.jarUrl
                                     this[ExtensionTable.iconUrl] = foundExtension.iconUrl
                                 }
                             }.toExecutable()
                             .execute(this@transaction)
                     }
                 }
+
                 if (extensionsToInsert.isNotEmpty()) {
                     ExtensionTable.batchInsert(extensionsToInsert) { foundExtension ->
-                        this[ExtensionTable.repo] = foundExtension.repo
+                        this[ExtensionTable.storeIndexUrl] = foundExtension.storeIndexUrl
                         this[ExtensionTable.name] = foundExtension.name
                         this[ExtensionTable.pkgName] = foundExtension.pkgName
+                        this[ExtensionTable.extensionLib] = foundExtension.extensionLib
                         this[ExtensionTable.versionName] = foundExtension.versionName
                         this[ExtensionTable.versionCode] = foundExtension.versionCode
                         this[ExtensionTable.lang] = foundExtension.lang
-                        this[ExtensionTable.isNsfw] = foundExtension.isNsfw
-                        this[ExtensionTable.apkName] = foundExtension.apkName
+                        this[ExtensionTable.contentWarning] = foundExtension.contentWarning.ordinal
+                        this[ExtensionTable.apkUrl] = foundExtension.apkUrl
+                        this[ExtensionTable.jarUrl] = foundExtension.jarUrl
                         this[ExtensionTable.iconUrl] = foundExtension.iconUrl
                     }
                 }
@@ -200,6 +216,7 @@ object ExtensionsList {
                     extensionsToDelete
                         .groupBy { it[ExtensionTable.isInstalled] }
                         .mapValues { (_, extensions) -> extensions.map { it[ExtensionTable.pkgName] } }
+
                 // not in the repo, so these extensions are obsolete
                 val obsoleteExtensions = extensionsToRemove[true].orEmpty()
                 if (obsoleteExtensions.isNotEmpty()) {
@@ -207,6 +224,7 @@ object ExtensionsList {
                         it[isObsolete] = true
                     }
                 }
+
                 // is not installed, so we can remove the record without a care
                 val removeExtensions = extensionsToRemove[false].orEmpty()
                 if (removeExtensions.isNotEmpty()) {
@@ -215,16 +233,4 @@ object ExtensionsList {
             }
         }
     }
-
-    private fun String.repoUrlReplace(): String =
-        if (contains("github")) {
-            replace(repoMatchRegex) {
-                "https://raw.githubusercontent.com/${it.groupValues[2]}/${it.groupValues[3]}/" +
-                    (it.groupValues.getOrNull(4)?.ifBlank { null } ?: "repo") +
-                    "/" +
-                    (it.groupValues.getOrNull(5)?.ifBlank { null } ?: "index.min.json")
-            }
-        } else {
-            this
-        }
 }

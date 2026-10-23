@@ -18,7 +18,7 @@ enum class IncludeOrExclude(
     ;
 
     companion object {
-        fun fromValue(value: Int) = IncludeOrExclude.values().find { it.value == value } ?: UNSET
+        fun fromValue(value: Int) = entries.find { it.value == value } ?: UNSET
     }
 }
 
@@ -27,8 +27,10 @@ data class CategoryDataClass(
     val order: Int,
     val name: String,
     val default: Boolean,
-    val size: Int,
     val includeInUpdate: IncludeOrExclude,
     val includeInDownload: IncludeOrExclude,
-    val meta: Map<String, String> = emptyMap(),
+    val isDefaultCategory: Boolean,
+    val version: Long,
+    val uid: Long,
+    val lastModifiedAt: Long,
 )

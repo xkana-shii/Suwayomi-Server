@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.source.local.metadata
 
-import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.serialization.Serializable
 import nl.adaptivity.xmlutil.serialization.XmlElement
 import nl.adaptivity.xmlutil.serialization.XmlSerialName
@@ -67,8 +67,9 @@ fun SChapter.copyFromComicInfo(comicInfo: ComicInfo) {
     }
 
     // Prefer translator, otherwise writer (these are the best guesses for scanlator)
-    val scanner = comicInfo.translator?.value?.takeIf { it.isNotBlank() }
-        ?: comicInfo.writer?.value?.takeIf { it.isNotBlank() }
+    val scanner =
+        comicInfo.translator?.value?.takeIf { it.isNotBlank() }
+            ?: comicInfo.writer?.value?.takeIf { it.isNotBlank() }
     if (scanner != null) {
         this.scanlator = scanner
     }
@@ -79,7 +80,12 @@ fun SChapter.copyFromComicInfo(comicInfo: ComicInfo) {
         val m = (comicInfo.month?.value ?: 1).coerceIn(1, 12)
         val d = (comicInfo.day?.value ?: 1).coerceIn(1, 31)
         try {
-            val epochMillis = LocalDate.of(y, m, d).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+            val epochMillis =
+                LocalDate
+                    .of(y, m, d)
+                    .atStartOfDay()
+                    .toInstant(ZoneOffset.UTC)
+                    .toEpochMilli()
             if (epochMillis > 0) {
                 this.date_upload = epochMillis
             }

@@ -27,18 +27,22 @@ data class MangaBakaListEntry(
     @SerialName("number_of_rereads")
     val numberOfRereads: Int? = null,
 ) {
-    fun getStatus(): Int = when (state) {
-        "considering" -> MangaBaka.CONSIDERING
-        "completed" -> MangaBaka.COMPLETED
-        "dropped" -> MangaBaka.DROPPED
-        "paused" -> MangaBaka.PAUSED
-        "plan_to_read" -> MangaBaka.PLAN_TO_READ
-        "reading" -> MangaBaka.READING
-        "rereading" -> MangaBaka.REREADING
-        else -> throw NotImplementedError("Unknown status: $state")
-    }
+    fun getStatus(): Int =
+        when (state) {
+            "considering" -> MangaBaka.CONSIDERING
+            "completed" -> MangaBaka.COMPLETED
+            "dropped" -> MangaBaka.DROPPED
+            "paused" -> MangaBaka.PAUSED
+            "plan_to_read" -> MangaBaka.PLAN_TO_READ
+            "reading" -> MangaBaka.READING
+            "rereading" -> MangaBaka.REREADING
+            else -> throw NotImplementedError("Unknown status: $state")
+        }
 
-    fun toTrack(resolvedId: Long, seriesData: MangaBakaItem): Track =
+    fun toTrack(
+        resolvedId: Long,
+        seriesData: MangaBakaItem,
+    ): Track =
         Track.create(TrackerManager.MANGABAKA).apply {
             remote_id = resolvedId
             title = seriesData.title
@@ -54,26 +58,29 @@ data class MangaBakaListEntry(
     fun mergeWithResolved(other: MangaBakaListEntry?): MangaBakaListEntry {
         if (other == null) return this
 
-        val statusPriority = mapOf(
-            "completed" to 7,
-            "rereading" to 6,
-            "reading" to 5,
-            "paused" to 4,
-            "dropped" to 3,
-            "plan_to_read" to 2,
-            "considering" to 1,
-        )
+        val statusPriority =
+            mapOf(
+                "completed" to 7,
+                "rereading" to 6,
+                "reading" to 5,
+                "paused" to 4,
+                "dropped" to 3,
+                "plan_to_read" to 2,
+                "considering" to 1,
+            )
 
         return other.copy(
-            state = if ((statusPriority[other.state] ?: 0) >= (statusPriority[this.state] ?: 0)) {
-                other.state
-            } else {
-                this.state
-            },
+            state =
+                if ((statusPriority[other.state] ?: 0) >= (statusPriority[this.state] ?: 0)) {
+                    other.state
+                } else {
+                    this.state
+                },
             startDate = listOfNotNull(this.startDate, other.startDate).minOrNull(),
             finishDate = listOfNotNull(this.finishDate, other.finishDate).maxOrNull(),
-            progressChapter = maxOf(this.progressChapter ?: 0.0, other.progressChapter ?: 0.0)
-                .takeIf { it > 0.0 },
+            progressChapter =
+                maxOf(this.progressChapter ?: 0.0, other.progressChapter ?: 0.0)
+                    .takeIf { it > 0.0 },
             rating = listOfNotNull(this.rating, other.rating).maxOrNull(),
             numberOfRereads = maxOf(this.numberOfRereads ?: 0, other.numberOfRereads ?: 0),
             isPrivate = this.isPrivate || other.isPrivate,

@@ -65,6 +65,7 @@ open class SettingDelegate<T : Any>(
                         convertToGqlType = typeInfo?.convertToGqlType,
                         convertToInternalType = typeInfo?.convertToInternalType,
                         convertToBackupType = typeInfo?.convertToBackupType,
+                        restoreLegacy = typeInfo?.restoreLegacy,
                     ),
                 defaultValue = defaultValue,
                 validator =
@@ -176,8 +177,12 @@ class MigratedConfigValue<T : Any>(
                     SettingsRegistry.TypeInfo(
                         type = typeInfo?.type ?: defaultValue::class,
                         specificType = typeInfo?.specificType,
+                        interfaceType = typeInfo?.interfaceType,
                         backupType = typeInfo?.backupType,
                         imports = typeInfo?.imports,
+                        convertToGqlType = typeInfo?.convertToGqlType,
+                        convertToInternalType = typeInfo?.convertToInternalType,
+                        convertToBackupType = typeInfo?.convertToBackupType,
                         restoreLegacy = typeInfo?.restoreLegacy,
                     ),
                 defaultValue = defaultValue,
@@ -221,6 +226,7 @@ class StringSetting(
     protoNumber: Int,
     defaultValue: String,
     pattern: Regex? = null,
+    minLength: Int? = null,
     maxLength: Int? = null,
     group: SettingGroup,
     deprecated: SettingsRegistry.SettingDeprecated? = null,
@@ -235,6 +241,8 @@ class StringSetting(
             when {
                 pattern != null && !value.matches(pattern) ->
                     "Value (${maybeRedact(value, privacySafe)}) must match pattern: ${pattern.pattern}"
+                minLength != null && value.length < minLength ->
+                    "Value (${maybeRedact(value, privacySafe)}) must have at least $minLength characters"
                 maxLength != null && value.length > maxLength ->
                     "Value (${maybeRedact(value, privacySafe)}) must not exceed $maxLength characters"
                 else -> null
@@ -462,6 +470,8 @@ class DisableableDoubleSetting(
 class BooleanSetting(
     protoNumber: Int,
     defaultValue: Boolean,
+    validator: ((Boolean) -> String?)? = null,
+    toValidValue: ((Boolean) -> Boolean)? = null,
     group: SettingGroup,
     deprecated: SettingsRegistry.SettingDeprecated? = null,
     requiresRestart: Boolean? = null,
@@ -471,7 +481,8 @@ class BooleanSetting(
 ) : SettingDelegate<Boolean>(
         protoNumber = protoNumber,
         defaultValue = defaultValue,
-        validator = null,
+        validator = validator,
+        toValidValue = toValidValue,
         group = group,
         deprecated = deprecated,
         requiresRestart = requiresRestart,

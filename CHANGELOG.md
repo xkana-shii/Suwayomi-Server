@@ -7,7 +7,131 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased] (Preview)
 
 ### Added
-- .
+- (**API**) Add User Accounts
+- (**Database/Settings/API**) Add setting `hikariMaxPoolSize` to be able to configure the maximum number of connections to the database
+- (**Database/Settings/API**) Add setting `databaseSchema` to be able to configure the database schema name
+- (**Database**) Add indexes on ChapterTable and ChapterUserTable for faster queries
+
+### Changed
+- (**GraphQL**) Count the nodes of list fields in SQL when `totalCount` is their only selection
+- (**Updates**) Index chapters by fetch time for the updates list
+- (**GraphQL**) Skip the count and first/last lookups of paginated lists when `totalCount` and `pageInfo.hasNextPage`/`hasPreviousPage` aren't selected
+- (**GraphQL**) Find the chapters of the chapter-per-manga data loaders in SQL instead of in memory
+- (**GraphQL**) Write data loader ids into the SQL instead of binding them
+
+### Fixed
+- (**Tracker**) Fix the possibility of attempting to insert multiple track searches
+- (**Auth**) Stop logging routine expired-token rejections as errors
+- (**Thumbnails**) Refresh the thumbnail URL when its host is unreachable
+- (**API**) Answer 424 instead of 500 when a source fails
+- (**Local Source**) Fix detection of Synology metadata folders as local chapters
+- (**Network/WebView**) Fix configured SOCKS proxy not being used by WebView and Cloudflare bypass
+- (**Extension**) Fix extension update/installation failure due to a missing older extension file
+
+### Deprecated
+- (**Downloads/Updates/API**) Remove `maxUpdates` `download` and `update` subscription input as it is not needed anymore due to subscriptions now supporting data loader batching
+
+## [v2.4.2366] + [WebUI: v20260929.01] - 2026-09-29
+
+#### Bug Squashing and Optimizations!
+This release focuses on fixing many bugs and optimizing startup time! 
+
+#### [Syncyomi]([SyncYomi](https://github.com/syncyomi/syncyomi)) v2 Support!
+Syncyomi has released its next version of syncing your library, optimizing the sync and squashing many bugs! 
+
+### Added
+- (**API**) Add platform information to `aboutServer` query
+- (**Cache/API**) Add a way to clear cache & cookies
+- (**Category/API**) Add `isDefaultCategory` in preparation of incompatible changes of future versions
+- (**Downloads**) Try to preserve downloaded files during a chapter list update for chapters with title and/or scanlator change
+- (**Downloads/API**) Add batch GQL mutation for reordering chapter downloads (`reorderChapterDownloads`)
+- (**Logs**) Add IP location logging
+- (**SyncYomi**) Support sync protocol v2: the server merges, only changes since the last upload are sent and category deletions are reported explicitly
+
+### Changed
+- (**Cloudflare/flaresolverr**) Send full `POST` json body to flaresolverr instead of empty string
+- (**Downloads**) Skip LocalSource downloading
+- (**GraphQL**) Updated GraphiQL GraphQL Playground
+- (**SystemTray**) Disable DorkBox update requests
+- (**Webview**) Don't throw an exception when disabling CEF
+
+### Fixed
+- (**Category**) Fix library/category counts not matching the actual number of manga due to duplicate category-manga rows
+- (**Chapter**) Fix the fallback upload date of new chapters without one being stored in seconds instead of milliseconds (sorted as early 1970); existing chapters are repaired by a migration
+- (**Cloudflare/flaresolverr**) Treat a bypass as successful when a `cf_clearance` cookie is returned, so non-CloudFlare source errors are correctly passed through to the extensions.
+- (**Download/API**) Fix subscription returning stale chapter data in some cases
+- (**Downloads/API**) Fix graphql download queue items position field of unmodified items after a reorder
+- (**Downloads/API**) Fix sending updates for dequeued downloads
+- (**Extension**) Fix extension update failure potentially causing a NullPointerException on the next update attempt
+- (**Extension**) Fix losing installed extension in case the update fails
+- (**Extension/Android**) Implement fromHtml with flags for author's note support
+- (**Extension/Settings**) Fix `extensionRepos` setting not being migrated to `extensionStores`
+- (**HTML**) Fix HTML being sent with gibberish when using non-latin characters
+- (**Manga/Extension**) Fix resolving manga URLs for extensions that use memo data
+- (**OPDS**) Fix OPDS search charset
+- (**Source/API**) Fix graphql browse mutation (`fetchSourceManga`) with filters including nested group changes
+- (**SyncYomi**) Adopt the server's record versions when restoring a sync response so a manga or chapter that lost a merge once can win later; a one-time full converging sync repairs skewed version counters
+- (**SyncYomi**) Chapter reads no longer bump the manga version, which let the device that read more chapters silently revert the other device's category/tracking changes
+- (**SyncYomi**) Fix local changes never winning a sync on PostgreSQL (version triggers were no-ops), chapter versions being reset on chapter refresh, category removals and tracking changes never bumping the manga version, and sync restores re-stamping every row as locally modified
+- (**SyncYomi**) Keep TachiyomiSY's library sort, chapter sort/filter and reading mode flags when Suwayomi's copy wins a sync
+- (**SyncYomi/Backup**) Fix restoring a library that originated from another client or was re-encoded by the sync server ("Field 'libraryId' is required ... but it was missing")
+- (**SyncYomi/Category**) Fix category reorder not syncing after a sync adopted a peer's 0-based category orders (collision with the default category broke the WebUI reorder)
+- (**SyncYomi/Category**) Use the 0-based Mihon/SY category order convention on the sync wire and store incoming orders as 1-based ranks, so category positions converge between Suwayomi and Tachiyomi forks
+- (**Tracker**) Fix Shikimori
+- (**WebView**) Fix `kcef` causing the server startup to fail
+- (**WebView**) Fix authentication with subpath option
+- (**WebView**) Fix that UI-WebView did not share user agent (background WebView unchanged)
+
+## [v2.3.2243] - 2026-07-13
+
+### Added
+- (**Extension**) Add ability to install jar versions of extensions
+
+### Fixed
+- (**Extension**) Fix missing memo field in getPageList
+
+## [v2.3.2238] - 2026-07-05
+
+### Changed
+- (**Extension**) Support fully qualified extension class names
+- (**Manga/API**) Return partial responses for Manga And Chapters query
+
+### Fixed
+- (**Database/H2**) Use temporary file for H2 migration tools download
+
+## [v2.3.2232] - 2026-07-03
+
+### Fixed
+- (**Extension**) Update APK url on installed Extensions
+
+## [v2.3.2230] - 2026-07-01
+
+### Fixed
+- (**Extension/API**) Fix GQL handling of extensions without an extension store
+- (**Build/Bundler**) Fix build continuing if errors happen
+- (**Build/Bundler**) Remove jogamp from build script
+- (**Build/Bundler**) Fix chmod attempts on Windows Java
+
+## [v2.3.2223] + [WebUI: v20260509.01] - 2026-06-30
+
+### Major Changes
+
+#### Added [SyncYomi](https://github.com/syncyomi/syncyomi) support
+This allows you to sync your server manga with other Mihon-based forks! As long as the fork supports SyncYomi it can be sync with!
+
+#### Support Extension API v1.6
+This update allows Suwayomi to load and use v1.6 extensions, it is a minor improvement over the existing 1.4 extension API that cleans up much of what we had! It is the basis of future extension APIs that will allow for further development.
+
+This also allows us to move to Mihon's Extension Store system and replace our Extension Repo system. Old Extension Repos are still compatible and will be automatically migrated if they move to the Extension Store system.
+
+> [!WARNING]
+> Please back up your Extension Repos, because of the new Extension Stores system you may lose them in the update process and may need to re-add them.
+
+### Added
+- (**Sync**) Added [SyncYomi](https://github.com/syncyomi/syncyomi) support
+- (**OPDS**) Add option to skip chapter metadata feed providing direct stream/download links
+- (**Extension/API**) Support Extensions API v1.6
+- (**Tracker/API**) Add mutation to bind existing track record
 
 ### Changed
 - (**Database/H2**) Use the latest H2 database engine
@@ -29,6 +153,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - (**API**) Fix GraphQL `Filter` `notAll` and `notAny` being inversed
 - (**API**) Fix GraphQL `Filter` causing an UnsupportedOperationException when passing an empty list as a `Any` filter value
 - (**Build**) Fix CURL failing silently in builds
+- (**Backup/Database**) Fix backup creation slowdown when mapping chapters
 
 ## [v2.2.2100] + [WebUI: v20260508.01] - 2026-05-08
 
@@ -422,7 +547,8 @@ Huge thanks to @martinek who pulled the most of the weight this release!
 - N/A
 
 <!-- WEBUI LINKS -->
-
+[WebUI: v20260929.01]: https://github.com/Suwayomi/Suwayomi-WebUI/blob/master/CHANGELOG.md#2026092901-r3518---2026-09-29
+[WebUI: v20260509.01]: https://github.com/Suwayomi/Suwayomi-WebUI/blob/master/CHANGELOG.md#2026050901-r3147---2026-05-09
 [WebUI: v20260508.01]: https://github.com/Suwayomi/Suwayomi-WebUI/blob/master/CHANGELOG.md#2026050801-r3136---2026-05-08
 [WebUI: v20251230.01]: https://github.com/Suwayomi/Suwayomi-WebUI/blob/master/CHANGELOG.md#2025123001-r2937---2025-12-30
 [WebUI: v20250801.01]: https://github.com/Suwayomi/Suwayomi-WebUI/blob/master/CHANGELOG.md#2025080101-r2717---2025-08-01
@@ -449,7 +575,13 @@ Huge thanks to @martinek who pulled the most of the weight this release!
 
 <!-- SERVER LINKS -->
 
-[unreleased]: https://github.com/suwayomi/suwayomi-server/compare/v2.2.2100...HEAD
+[unreleased]: https://github.com/suwayomi/suwayomi-server/compare/v2.4.2366...HEAD
+[v2.4.2366]: https://github.com/suwayomi/suwayomi-server/compare/v2.3.2243...v2.4.2366
+[v2.3.2243]: https://github.com/suwayomi/suwayomi-server/compare/v2.3.2238...v2.3.2243
+[v2.3.2238]: https://github.com/suwayomi/suwayomi-server/compare/v2.3.2232...v2.3.2238
+[v2.3.2232]: https://github.com/suwayomi/suwayomi-server/compare/v2.3.2230...v2.3.2232
+[v2.3.2230]: https://github.com/suwayomi/suwayomi-server/compare/v2.3.2223...v2.3.2230
+[v2.3.2223]: https://github.com/suwayomi/suwayomi-server/compare/v2.2.2100...v2.3.2223
 [v2.2.2100]: https://github.com/suwayomi/suwayomi-server/compare/v2.1.1867...v2.2.2100
 [v2.1.1867]: https://github.com/suwayomi/suwayomi-server/compare/v2.0.1727...v2.1.1867
 [v2.0.1727]: https://github.com/suwayomi/suwayomi-server/compare/v1.1.1...v2.0.1727

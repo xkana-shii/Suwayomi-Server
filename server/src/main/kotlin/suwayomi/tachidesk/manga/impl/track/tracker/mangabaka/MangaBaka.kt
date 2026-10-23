@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.track.tracker.mangabaka
 
+import io.github.reactivecircus.cache4k.Cache
 import kotlinx.serialization.json.Json
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
@@ -9,6 +10,8 @@ import suwayomi.tachidesk.manga.impl.track.tracker.model.Track
 import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackSearch
 import uy.kohesive.injekt.injectLazy
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.hours
 
 class MangaBaka(
     id: Int,
@@ -16,8 +19,22 @@ class MangaBaka(
     DeletableTracker {
     private val json: Json by injectLazy()
 
-    private val interceptor by lazy { MangaBakaInterceptor(this) }
-    private val api by lazy { MangaBakaApi(id, client, interceptor) }
+    private val interceptors = ConcurrentHashMap<Int, MangaBakaInterceptor>()
+    private val apis =
+        Cache
+            .Builder<Int, MangaBakaApi>()
+            .expireAfterAccess(1.hours)
+            .build()
+
+    fun interceptor(userId: Int): MangaBakaInterceptor =
+        interceptors.getOrPut(userId) {
+            MangaBakaInterceptor(userId, this)
+        }
+
+    suspend fun api(userId: Int): MangaBakaApi =
+        apis.get(userId) {
+            MangaBakaApi(id, client, interceptor(userId))
+        }
 
     override val supportsReadingDates: Boolean = true
     override val supportsPrivateTracking: Boolean = true
@@ -46,8 +63,8 @@ class MangaBaka(
 
     override fun getCompletionStatus(): Int = COMPLETED
 
-    override fun getScoreList(): List<String> =
-        when (trackPreferences.getScoreType(this)) {
+    override fun getScoreList(userId: Int): List<String> =
+        when (trackPreferences.getScoreType(userId, this)) {
             // 1, 2, ..., 99, 100
             STEP_1 -> IntRange(0, 100).map(Int::toString)
 
@@ -66,9 +83,13 @@ class MangaBaka(
             else -> throw Exception("Unknown score type")
         }
 
-    override fun displayScore(track: Track): String = track.score.toInt().toString()
+    override fun displayScore(
+        userId: Int,
+        track: Track,
+    ): String = track.score.toInt().toString()
 
     override suspend fun update(
+        userId: Int,
         track: Track,
         didReadChapter: Boolean,
     ): Track {
@@ -77,7 +98,7 @@ class MangaBaka(
         }
 
         if (track.status != COMPLETED && didReadChapter) {
-            val mangaItem = api.fetchSeriesData(track.remote_id)
+            val mangaItem = api(userId).fetchSeriesData(track.remote_id)
             if (track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters &&
                 (mangaItem.status == "completed" || mangaItem.status == "cancelled")
             ) {
@@ -89,23 +110,24 @@ class MangaBaka(
                     track.started_reading_date = System.currentTimeMillis()
                 }
             }
-            return api.updateLibManga(track, knownSeriesData = mangaItem)
+            return api(userId).updateLibManga(track, knownSeriesData = mangaItem)
         }
 
-        return api.updateLibManga(track)
+        return api(userId).updateLibManga(track)
     }
 
     override suspend fun bind(
+        userId: Int,
         track: Track,
         hasReadChapters: Boolean,
     ): Track {
-        val remoteTrack = api.findLibManga(track)
+        val remoteTrack = api(userId).findLibManga(track)
         return if (remoteTrack != null) {
             track.copyPersonalFrom(remoteTrack, copyRemotePrivate = false)
             track.title = remoteTrack.title
             track.total_chapters = remoteTrack.total_chapters
             track.tracking_url = "${MangaBakaApi.BASE_URL}/${remoteTrack.remote_id}"
-            track.remote_id = api.resolveId(remoteTrack.remote_id)
+            track.remote_id = api(userId).resolveId(remoteTrack.remote_id)
 
             if (track.status != COMPLETED) {
                 when (track.status) {
@@ -116,7 +138,7 @@ class MangaBaka(
                 }
             } else {
                 try {
-                    val seriesData = api.fetchSeriesData(track.remote_id)
+                    val seriesData = api(userId).fetchSeriesData(track.remote_id)
                     val isCompletedRemotely = seriesData.status == "completed" || seriesData.status == "cancelled"
                     val reachedEnd = track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters
                     if (!(isCompletedRemotely && reachedEnd)) {
@@ -127,18 +149,21 @@ class MangaBaka(
                 }
             }
 
-            update(track, hasReadChapters)
+            update(userId, track, hasReadChapters)
         } else {
             // Set default fields if it's not found in the list
             track.tracking_url = "${MangaBakaApi.BASE_URL}/${track.remote_id}"
             track.status = if (hasReadChapters) READING else PLAN_TO_READ
             track.score = 0.0
 
-            api.addLibManga(track).also { track.title = it.title }
+            api(userId).addLibManga(track).also { track.title = it.title }
         }
     }
 
-    override suspend fun search(query: String): List<TrackSearch> {
+    override suspend fun search(
+        userId: Int,
+        query: String,
+    ): List<TrackSearch> {
         val normalized =
             TRACKER_PATTERNS
                 .firstNotNullOfOrNull { (tracker, prefix) ->
@@ -149,11 +174,14 @@ class MangaBaka(
                         ?.let { "$prefix$it" }
                 } ?: query
 
-        return api.search(normalized)
+        return api(userId).search(normalized)
     }
 
-    override suspend fun refresh(track: Track): Track {
-        val remoteTrack = api.findLibManga(track)
+    override suspend fun refresh(
+        userId: Int,
+        track: Track,
+    ): Track {
+        val remoteTrack = api(userId).findLibManga(track)
         track.remote_id = remoteTrack?.remote_id ?: track.remote_id
         track.tracking_url = "${MangaBakaApi.BASE_URL}/${track.remote_id}"
 
@@ -164,8 +192,8 @@ class MangaBaka(
 
             if (track.status == COMPLETED) {
                 try {
-                    val resolvedId = api.resolveId(track.remote_id)
-                    val seriesData = api.fetchSeriesData(resolvedId)
+                    val resolvedId = api(userId).resolveId(track.remote_id)
+                    val seriesData = api(userId).fetchSeriesData(resolvedId)
                     val isCompletedRemotely = seriesData.status == "completed" || seriesData.status == "cancelled"
                     val reachedEnd = track.total_chapters > 0 && track.last_chapter_read.toInt() == track.total_chapters
                     if (!(isCompletedRemotely && reachedEnd)) {
@@ -181,51 +209,53 @@ class MangaBaka(
 
     override fun authUrl(): String = MangaBakaApi.authUrl().toString()
 
-    override suspend fun authCallback(url: String) {
+    override suspend fun authCallback(
+        userId: Int,
+        url: String,
+    ) {
         val code = url.extractToken("code") ?: throw IOException("cannot find token")
-        login(code)
+        login(userId, "user", code)
     }
 
-    override suspend fun login(
+    // [Tracker.login] logs out again when this throws
+    override suspend fun loginImpl(
+        userId: Int,
         username: String,
         password: String,
-    ) = login(password)
-
-    suspend fun login(code: String) {
-        try {
-            val oauth = api.getAccessToken(code)
-            interceptor.setAuth(oauth)
-            saveCredentials("user", oauth.accessToken)
-            val scoreType =
-                when (val scoreStep = api.getScoreStepSize()) {
-                    1 -> STEP_1
-                    5 -> STEP_5
-                    10 -> STEP_10
-                    20 -> STEP_20
-                    25 -> STEP_25
-                    else -> throw Exception("Unknown score step size $scoreStep")
-                }
-            trackPreferences.setScoreType(this, scoreType)
-        } catch (_: Exception) {
-            logout()
-        }
+    ) {
+        val oauth = api(userId).getAccessToken(password)
+        interceptor(userId).setAuth(oauth)
+        saveCredentials(userId, "user", oauth.accessToken)
+        val scoreType =
+            when (val scoreStep = api(userId).getScoreStepSize()) {
+                1 -> STEP_1
+                5 -> STEP_5
+                10 -> STEP_10
+                20 -> STEP_20
+                25 -> STEP_25
+                else -> throw Exception("Unknown score step size $scoreStep")
+            }
+        trackPreferences.setScoreType(userId, this, scoreType)
     }
 
-    fun saveToken(oauth: MangaBakaOAuth?) {
-        trackPreferences.setTrackToken(this, json.encodeToString(oauth))
+    fun saveToken(
+        userId: Int,
+        oauth: MangaBakaOAuth?,
+    ) {
+        trackPreferences.setTrackToken(userId, this, json.encodeToString(oauth))
     }
 
-    fun restoreToken(): MangaBakaOAuth? =
+    fun restoreToken(userId: Int): MangaBakaOAuth? =
         try {
-            json.decodeFromString<MangaBakaOAuth>(trackPreferences.getTrackToken(this)!!)
+            json.decodeFromString<MangaBakaOAuth>(trackPreferences.getTrackToken(userId, this)!!)
         } catch (_: Exception) {
             null
         }
 
-    override fun logout() {
-        super.logout()
-        trackPreferences.setTrackToken(this, null)
-        interceptor.setAuth(null)
+    override suspend fun logout(userId: Int) {
+        super.logout(userId)
+        trackPreferences.setTrackToken(userId, this, null)
+        interceptor(userId).setAuth(null)
     }
 
     /*
@@ -234,8 +264,11 @@ class MangaBaka(
     }
      */
 
-    override suspend fun delete(track: Track) {
-        api.deleteLibManga(track)
+    override suspend fun delete(
+        userId: Int,
+        track: Track,
+    ) {
+        api(userId).deleteLibManga(track)
     }
 
     companion object {

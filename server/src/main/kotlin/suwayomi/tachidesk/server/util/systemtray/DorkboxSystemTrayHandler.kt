@@ -16,6 +16,7 @@ import suwayomi.tachidesk.server.generated.BuildConfig
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.server.util.Browser.openInBrowser
 import suwayomi.tachidesk.server.util.ExitCode.Success
+import suwayomi.tachidesk.server.util.Platform
 import suwayomi.tachidesk.server.util.shutdownApp
 
 class DorkboxSystemTrayHandler : SystemTrayHandler {
@@ -35,7 +36,7 @@ class DorkboxSystemTrayHandler : SystemTrayHandler {
 
                 CacheUtil.clear(BuildConfig.NAME)
 
-                if (System.getProperty("os.name").startsWith("Mac")) {
+                if (Platform.current.os.isMacOS) {
                     SystemTray.FORCE_TRAY_TYPE = SystemTray.TrayType.Awt
                 }
 

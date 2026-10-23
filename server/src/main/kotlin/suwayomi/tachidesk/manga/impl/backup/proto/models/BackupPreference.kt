@@ -21,24 +21,36 @@ sealed class PreferenceValue
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue")
-data class IntPreferenceValue(val value: Int) : PreferenceValue()
+data class IntPreferenceValue(
+    val value: Int,
+) : PreferenceValue()
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue")
-data class LongPreferenceValue(val value: Long) : PreferenceValue()
+data class LongPreferenceValue(
+    val value: Long,
+) : PreferenceValue()
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.FloatPreferenceValue")
-data class FloatPreferenceValue(val value: Float) : PreferenceValue()
+data class FloatPreferenceValue(
+    val value: Float,
+) : PreferenceValue()
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue")
-data class StringPreferenceValue(val value: String) : PreferenceValue()
+data class StringPreferenceValue(
+    val value: String,
+) : PreferenceValue()
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue")
-data class BooleanPreferenceValue(val value: Boolean) : PreferenceValue()
+data class BooleanPreferenceValue(
+    val value: Boolean,
+) : PreferenceValue()
 
 @Serializable
 @SerialName("eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue")
-data class StringSetPreferenceValue(val value: Set<String>) : PreferenceValue()
+data class StringSetPreferenceValue(
+    val value: Set<String>,
+) : PreferenceValue()

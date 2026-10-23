@@ -21,13 +21,15 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.graphql.types.DownloadConversion
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
-import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
+import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrNull
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse.getImageResponse
 import suwayomi.tachidesk.manga.impl.util.storage.ImageUtil
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.PageTable
 import suwayomi.tachidesk.server.serverConfig
+import suwayomi.tachidesk.server.settings.userConfig
+import suwayomi.tachidesk.server.settings.value
 import suwayomi.tachidesk.util.ConversionUtil
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -118,7 +120,7 @@ object Page {
             return imageFile.inputStream() to (ImageUtil.findImageType { imageFile.inputStream() }?.mime ?: "image/jpeg")
         }
 
-        val source = getCatalogueSourceOrStub(mangaEntry[MangaTable.sourceReference])
+        val source = getSourceOrNull(mangaEntry[MangaTable.sourceReference])!!
         source as HttpSource
 
         if (pageEntry[PageTable.imageUrl] == null) {
@@ -141,6 +143,7 @@ object Page {
     }
 
     suspend fun getPageImageServe(
+        userId: Int,
         mangaId: Int,
         chapterIndex: Int,
         index: Int,
@@ -152,7 +155,7 @@ object Page {
                 chapterIndex = chapterIndex,
                 index = index,
             )
-        val conversions = serverConfig.serveConversions.value
+        val conversions = userConfig.serveConversions.value(userId)
         val defaultConversion = conversions["default"]
         val formatConversion = format?.let { DownloadConversion(target = it) }
         val conversion =

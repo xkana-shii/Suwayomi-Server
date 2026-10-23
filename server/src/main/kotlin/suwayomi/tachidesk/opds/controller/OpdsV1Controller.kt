@@ -9,9 +9,12 @@ import suwayomi.tachidesk.opds.dto.OpdsMangaFilter
 import suwayomi.tachidesk.opds.dto.OpdsSearchCriteria
 import suwayomi.tachidesk.opds.dto.PrimaryFilterType
 import suwayomi.tachidesk.opds.impl.OpdsFeedBuilder
+import suwayomi.tachidesk.opds.util.OpdsStringUtil.escapeXml
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.JavalinSetup.getAttribute
+import suwayomi.tachidesk.server.user.UserPermission
+import suwayomi.tachidesk.server.user.hasPermission
 import suwayomi.tachidesk.server.user.requireUserWithBasicFallback
 import suwayomi.tachidesk.server.util.handler
 import suwayomi.tachidesk.server.util.pathParam
@@ -31,22 +34,24 @@ object OpdsV1Controller {
      * It asynchronously builds the feed and sets the response content type.
      */
     private fun getLibraryFeed(
+        userId: Int,
         ctx: Context,
-        pageNum: Int?,
+        locale: Locale,
         criteria: OpdsMangaFilter,
         isSearch: Boolean,
+        pageNum: Int,
     ) {
-        val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
         ctx.future {
             future {
                 OpdsFeedBuilder.getLibraryFeed(
-                    criteria = criteria,
-                    baseUrl = BASE_URL,
-                    pageNum = pageNum ?: 1,
-                    sort = criteria.sort,
-                    filter = criteria.filter,
-                    locale = locale,
-                    isSearch = isSearch,
+                    userId,
+                    BASE_URL,
+                    locale,
+                    criteria,
+                    isSearch,
+                    pageNum,
+                    criteria.sort,
+                    criteria.filter,
                 )
             }.thenApply { xml ->
                 ctx.contentType(OPDS_MIME).result(xml)
@@ -67,9 +72,9 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
-                ctx.contentType(OPDS_MIME).result(OpdsFeedBuilder.getRootFeed(BASE_URL, locale))
+                ctx.contentType(OPDS_MIME).result(OpdsFeedBuilder.getRootFeed(userId, BASE_URL, locale))
             },
             withResults = { httpCode(HttpStatus.OK) },
         )
@@ -90,11 +95,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getHistoryFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getHistoryFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -118,12 +123,13 @@ object OpdsV1Controller {
             behaviorOf = { ctx, lang ->
                 ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
-                ctx.contentType("application/opensearchdescription+xml").result(
+                ctx.contentType("application/opensearchdescription+xml;charset=UTF-8").result(
                     """
                     <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"
                         xmlns:atom="http://www.w3.org/2005/Atom">
-                        <ShortName>${MR.strings.opds_search_shortname.localized(locale)}</ShortName>
-                        <Description>${MR.strings.opds_search_description.localized(locale)}</Description>
+                        <ShortName>Suwayomi</ShortName>
+                        <LongName>${MR.strings.opds_search_shortname.localized(locale).escapeXml()}</LongName>
+                        <Description>${MR.strings.opds_search_description.localized(locale).escapeXml()}</Description>
                         <InputEncoding>UTF-8</InputEncoding>
                         <OutputEncoding>UTF-8</OutputEncoding>
                         <Url type="${OpdsConstants.TYPE_ATOM_XML_FEED_ACQUISITION}"
@@ -139,12 +145,13 @@ object OpdsV1Controller {
     /**
      * Serves an acquisition feed for all series in the library or search results.
      * This endpoint handles both general library browsing and specific search queries.
+     * This is the ONLY feed that extracts all the cross-filters from the context.
      */
     val seriesFeed =
         handler(
             documentWith = { withOperation { summary("OPDS Series in Library Feed") } },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val pageNumber = ctx.queryParam("pageNumber")?.toIntOrNull()
                 val query = ctx.queryParam("query")
                 val author = ctx.queryParam("author")
@@ -157,28 +164,20 @@ object OpdsV1Controller {
                     val opdsSearchCriteria = OpdsSearchCriteria(query, author, title)
                     ctx.future {
                         future {
-                            OpdsFeedBuilder.getSearchFeed(opdsSearchCriteria, BASE_URL, pageNumber ?: 1, locale)
+                            OpdsFeedBuilder.getSearchFeed(userId, BASE_URL, locale, opdsSearchCriteria, pageNumber ?: 1)
                         }.thenApply { xml ->
                             ctx.contentType(OPDS_MIME).result(xml)
                         }
                     }
                 } else {
-                    val criteria =
-                        OpdsMangaFilter(
-                            sourceId = ctx.queryParam("source_id")?.toLongOrNull(),
-                            categoryId = ctx.queryParam("category_id")?.toIntOrNull(),
-                            statusId = ctx.queryParam("status_id")?.toIntOrNull(),
-                            genre = ctx.queryParam("genre"),
-                            langCode = ctx.queryParam("lang_code"),
-                            sort = ctx.queryParam("sort"),
-                            filter = ctx.queryParam("filter"),
-                            primaryFilter = PrimaryFilterType.NONE,
-                        )
+                    val criteria = OpdsMangaFilter.fromContext(ctx, PrimaryFilterType.NONE)
                     getLibraryFeed(
+                        userId,
                         ctx,
-                        pageNumber,
+                        locale,
                         criteria,
-                        isSearch = false,
+                        false,
+                        pageNumber ?: 1,
                     )
                 }
             },
@@ -199,11 +198,13 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val user = ctx.getAttribute(Attribute.TachideskUser)
+                val userId = user.requireUserWithBasicFallback(ctx)
+                val includeNsfw = user.hasPermission(UserPermission.ACCESS_NSFW)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getExploreSourcesFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getExploreSourcesFeed(userId, BASE_URL, locale, pageNumber ?: 1, includeNsfw)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -226,11 +227,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getLibrarySourcesFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getLibrarySourcesFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -253,11 +254,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getCategoriesFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getCategoriesFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -280,11 +281,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getGenresFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getGenresFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -298,6 +299,7 @@ object OpdsV1Controller {
      */
     val statusesFeed =
         handler(
+            queryParam<Int?>("pageNumber"),
             queryParam<String?>("lang"),
             documentWith = {
                 withOperation {
@@ -305,12 +307,12 @@ object OpdsV1Controller {
                     description("Navigation feed listing series publication statuses for the library.")
                 }
             },
-            behaviorOf = { ctx, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+            behaviorOf = { ctx, pageNumber, lang ->
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getStatusFeed(BASE_URL, 1, locale)
+                        OpdsFeedBuilder.getStatusFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -324,6 +326,7 @@ object OpdsV1Controller {
      */
     val languagesFeed =
         handler(
+            queryParam<Int?>("pageNumber"),
             queryParam<String?>("lang"),
             documentWith = {
                 withOperation {
@@ -331,12 +334,12 @@ object OpdsV1Controller {
                     description("Navigation feed listing available content languages for series in the library.")
                 }
             },
-            behaviorOf = { ctx, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+            behaviorOf = { ctx, pageNumber, lang ->
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getLanguagesFeed(BASE_URL, locale)
+                        OpdsFeedBuilder.getLanguagesFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -359,11 +362,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, pageNumber, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getLibraryUpdatesFeed(BASE_URL, pageNumber ?: 1, locale)
+                        OpdsFeedBuilder.getLibraryUpdatesFeed(userId, BASE_URL, locale, pageNumber ?: 1)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -388,11 +391,21 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, sourceId, pageNumber, sort, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val user = ctx.getAttribute(Attribute.TachideskUser)
+                val userId = user.requireUserWithBasicFallback(ctx)
+                // val includeNsfw = user.hasPermission(UserPermission.ACCESS_NSFW)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getExploreSourceFeed(sourceId, BASE_URL, pageNumber ?: 1, sort ?: "popular", locale)
+                        OpdsFeedBuilder.getExploreSourceFeed(
+                            userId,
+                            BASE_URL,
+                            locale,
+                            sourceId,
+                            pageNumber ?: 1,
+                            sort ?: "popular",
+                            true, // includeNsfw,
+                        )
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -424,9 +437,10 @@ object OpdsV1Controller {
             pathParam<Long>("sourceId"),
             documentWith = { withOperation { summary("OPDS Library Source Specific Series Feed") } },
             behaviorOf = { ctx, sourceId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(sourceId = sourceId, primaryFilter = PrimaryFilterType.SOURCE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(userId, ctx, locale, criteria, false, ctx.queryParam("pageNumber")?.toIntOrNull() ?: 1)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -442,10 +456,11 @@ object OpdsV1Controller {
             pathParam<Int>("categoryId"),
             documentWith = { withOperation { summary("OPDS Category Specific Series Feed") } },
             behaviorOf = { ctx, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
                 val criteria =
                     buildCriteriaFromContext(ctx, OpdsMangaFilter(categoryId = categoryId, primaryFilter = PrimaryFilterType.CATEGORY))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(userId, ctx, locale, criteria, false, ctx.queryParam("pageNumber")?.toIntOrNull() ?: 1)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -461,9 +476,10 @@ object OpdsV1Controller {
             pathParam<String>("genre"),
             documentWith = { withOperation { summary("OPDS Genre Specific Series Feed") } },
             behaviorOf = { ctx, genre ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(genre = genre, primaryFilter = PrimaryFilterType.GENRE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(userId, ctx, locale, criteria, false, ctx.queryParam("pageNumber")?.toIntOrNull() ?: 1)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -479,9 +495,10 @@ object OpdsV1Controller {
             pathParam<Int>("statusId"),
             documentWith = { withOperation { summary("OPDS Status Specific Series Feed") } },
             behaviorOf = { ctx, statusId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(statusId = statusId, primaryFilter = PrimaryFilterType.STATUS))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(userId, ctx, locale, criteria, false, ctx.queryParam("pageNumber")?.toIntOrNull() ?: 1)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -502,10 +519,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, langCode ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx, ctx.queryParam("lang"))
                 val criteria =
                     buildCriteriaFromContext(ctx, OpdsMangaFilter(langCode = langCode, primaryFilter = PrimaryFilterType.LANGUAGE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(userId, ctx, locale, criteria, false, ctx.queryParam("pageNumber")?.toIntOrNull() ?: 1)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -530,11 +548,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, seriesId, pageNumber, sort, filter, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getSeriesChaptersFeed(seriesId, BASE_URL, pageNumber ?: 1, sort, filter, locale)
+                        OpdsFeedBuilder.getSeriesChaptersFeed(userId, BASE_URL, locale, seriesId, pageNumber ?: 1, sort, filter)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }
@@ -561,11 +579,11 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, seriesId, chapterIndex, lang ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val locale: Locale = LocalizationHelper.ctxToLocale(ctx, lang)
                 ctx.future {
                     future {
-                        OpdsFeedBuilder.getChapterMetadataFeed(seriesId, chapterIndex, BASE_URL, locale)
+                        OpdsFeedBuilder.getChapterMetadataFeed(userId, BASE_URL, locale, seriesId, chapterIndex)
                     }.thenApply { xml ->
                         ctx.contentType(OPDS_MIME).result(xml)
                     }

@@ -19,5 +19,9 @@ data class MangaBakaOAuth(
     val tokenType: String,
     val scope: String,
 ) {
-    fun isExpired(): Boolean = Clock.System.now().plus(1.minutes).epochSeconds > expiresAt
+    fun isExpired(): Boolean =
+        Clock.System
+            .now()
+            .plus(1.minutes)
+            .epochSeconds > expiresAt
 }

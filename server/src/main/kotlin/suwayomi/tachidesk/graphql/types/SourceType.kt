@@ -7,9 +7,10 @@
 
 package suwayomi.tachidesk.graphql.types
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
-import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.online.HttpSource
 import graphql.schema.DataFetchingEnvironment
@@ -21,13 +22,16 @@ import suwayomi.tachidesk.graphql.server.primitives.Edge
 import suwayomi.tachidesk.graphql.server.primitives.Node
 import suwayomi.tachidesk.graphql.server.primitives.NodeList
 import suwayomi.tachidesk.graphql.server.primitives.PageInfo
+import suwayomi.tachidesk.graphql.server.primitives.getNodeListFromDataLoaders
+import suwayomi.tachidesk.graphql.types.MangaNodeList.Companion.toNodeList
 import suwayomi.tachidesk.manga.impl.Source.getSourcePreferencesRaw
 import suwayomi.tachidesk.manga.impl.extension.Extension
-import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource
-import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
-import suwayomi.tachidesk.manga.model.dataclass.SourceDataClass
+import suwayomi.tachidesk.manga.impl.util.source.GetSource
+import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrStub
+import suwayomi.tachidesk.manga.model.dataclass.ContentWarning
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
+import suwayomi.tachidesk.server.JavalinSetup.future
 import java.util.concurrent.CompletableFuture
 import androidx.preference.CheckBoxPreference as SourceCheckBoxPreference
 import androidx.preference.EditTextPreference as SourceEditTextPreference
@@ -41,59 +45,55 @@ class SourceType(
     val id: Long,
     val name: String,
     val lang: String,
+    val contentWarning: ContentWarning,
     val iconUrl: String,
     val supportsLatest: Boolean,
     val isConfigurable: Boolean,
+    @GraphQLDeprecated("", ReplaceWith("contentWarning"))
     val isNsfw: Boolean,
     val displayName: String,
+    val homeUrl: String?,
+    @GraphQLDeprecated("", ReplaceWith("homeUrl"))
     val baseUrl: String?,
 ) : Node {
-    constructor(source: SourceDataClass) : this(
-        id = source.id.toLong(),
-        name = source.name,
-        lang = source.lang,
-        iconUrl = source.iconUrl,
-        supportsLatest = source.supportsLatest,
-        isConfigurable = source.isConfigurable,
-        isNsfw = source.isNsfw,
-        displayName = source.displayName,
-        baseUrl = source.baseUrl,
-    )
-
-    constructor(row: ResultRow, sourceExtension: ResultRow, catalogueSource: CatalogueSource) : this(
+    constructor(row: ResultRow, sourceExtension: ResultRow, source: Source) : this(
         id = row[SourceTable.id].value,
         name = row[SourceTable.name],
         lang = row[SourceTable.lang],
-        iconUrl = Extension.getExtensionIconUrl(sourceExtension[ExtensionTable.apkName]),
-        supportsLatest = catalogueSource.supportsLatest,
-        isConfigurable = catalogueSource is ConfigurableSource,
-        isNsfw = row[SourceTable.isNsfw],
-        displayName = catalogueSource.toString(),
-        baseUrl = catalogueSource.runCatching { (catalogueSource as? HttpSource)?.baseUrl }.getOrNull(),
+        contentWarning = ContentWarning.valueOf(row[SourceTable.contentWarning]),
+        iconUrl = Extension.proxyExtensionIconUrl(sourceExtension[ExtensionTable.pkgName]),
+        supportsLatest = source.supportsLatest,
+        isConfigurable = source is ConfigurableSource,
+        isNsfw = row[SourceTable.contentWarning] >= ContentWarning.MIXED.ordinal,
+        displayName = source.toString(),
+        homeUrl = runCatching { (source as? HttpSource)?.getHomeUrl() }.getOrNull(),
+        baseUrl = runCatching { (source as? HttpSource)?.baseUrl }.getOrNull(),
     )
 
     fun manga(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaNodeList> =
-        dataFetchingEnvironment.getValueFromDataLoader<Long, MangaNodeList>("MangaForSourceDataLoader", id)
+        dataFetchingEnvironment.getNodeListFromDataLoaders("MangaForSourceDataLoader", "MangaCountForSourceDataLoader", id) {
+            emptyList<MangaType>().toNodeList().copy(totalCount = it)
+        }
 
     fun extension(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ExtensionType> =
         dataFetchingEnvironment.getValueFromDataLoader<Long, ExtensionType>("ExtensionForSourceDataLoader", id)
 
-    fun nonLibraryCount(dataFetchingEnvironment: DataFetchingEnvironment): java.util.concurrent.CompletableFuture<Int> =
+    fun nonLibraryCount(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Int> =
         dataFetchingEnvironment.getValueFromDataLoader<Long, Int>("NonLibraryCountForSourceDataLoader", id)
 
-    fun preferences(): List<Preference> = getSourcePreferencesRaw(id).map { preferenceOf(it) }
+    fun preferences(): CompletableFuture<List<Preference>> = future { getSourcePreferencesRaw(id).map { preferenceOf(it) } }
 
-    fun filters(): List<Filter> = getCatalogueSourceOrStub(id).getFilterList().map { filterOf(it) }
+    fun filters(): CompletableFuture<List<Filter>> = future { getSourceOrStub(id).getFilterList().map { filterOf(it) } }
 
     fun meta(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<List<SourceMetaType>> =
         dataFetchingEnvironment.getValueFromDataLoader<Long, List<SourceMetaType>>("SourceMetaDataLoader", id)
 }
 
 @Suppress("ktlint:standard:function-naming")
-fun SourceType(row: ResultRow): SourceType? {
+suspend fun SourceType(row: ResultRow): SourceType? {
     val catalogueSource =
-        GetCatalogueSource
-            .getCatalogueSourceOrNull(row[SourceTable.id].value)
+        GetSource
+            .getSourceOrNull(row[SourceTable.id].value)
             ?: return null
     val sourceExtension =
         if (row.hasValue(ExtensionTable.id)) {
@@ -304,11 +304,18 @@ data class FilterChange(
 )
 
 fun updateFilterList(
-    source: CatalogueSource,
+    source: Source,
     changes: List<FilterChange>?,
 ): FilterList {
     val filterList = source.getFilterList()
+    applyFilterChanges(filterList, changes)
+    return filterList
+}
 
+private fun applyFilterChanges(
+    filterList: List<SourceFilter<*>>,
+    changes: List<FilterChange>?,
+) {
     changes?.forEach { change ->
         when (val filter = filterList[change.position]) {
             is SourceFilter.Header -> {
@@ -340,31 +347,11 @@ fun updateFilterList(
             }
 
             is SourceFilter.Group<*> -> {
-                val groupChange =
-                    change.groupChange
-                        ?: throw Exception("Expected group change at position ${change.position}")
-
-                when (val groupFilter = filter.state[groupChange.position]) {
-                    is SourceFilter.CheckBox -> {
-                        groupFilter.state = groupChange.checkBoxState
-                            ?: throw Exception("Expected checkbox state change at position ${change.position}")
-                    }
-
-                    is SourceFilter.TriState -> {
-                        groupFilter.state = groupChange.triState?.ordinal
-                            ?: throw Exception("Expected tri state change at position ${change.position}")
-                    }
-
-                    is SourceFilter.Text -> {
-                        groupFilter.state = groupChange.textState
-                            ?: throw Exception("Expected text state change at position ${change.position}")
-                    }
-
-                    is SourceFilter.Select<*> -> {
-                        groupFilter.state = groupChange.selectState
-                            ?: throw Exception("Expected select state change at position ${change.position}")
-                    }
-                }
+                @Suppress("UNCHECKED_CAST")
+                applyFilterChanges(
+                    filter.state as List<SourceFilter<*>>,
+                    listOf(change.groupChange ?: throw Exception("Expected group change at position ${change.position}")),
+                )
             }
 
             is SourceFilter.Sort -> {
@@ -374,7 +361,6 @@ fun updateFilterList(
             }
         }
     }
-    return filterList
 }
 
 sealed interface Preference

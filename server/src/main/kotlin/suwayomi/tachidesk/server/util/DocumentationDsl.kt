@@ -388,7 +388,7 @@ inline fun <
     reified P5,
     reified P6,
     reified P7,
-    > handler(
+> handler(
     param1: Param<P1>,
     param2: Param<P2>,
     param3: Param<P3>,
@@ -436,7 +436,7 @@ inline fun <
     reified P6,
     reified P7,
     reified P8,
-    > handler(
+> handler(
     param1: Param<P1>,
     param2: Param<P2>,
     param3: Param<P3>,
@@ -488,7 +488,7 @@ inline fun <
     reified P7,
     reified P8,
     reified P9,
-    > handler(
+> handler(
     param1: Param<P1>,
     param2: Param<P2>,
     param3: Param<P3>,
@@ -544,7 +544,7 @@ inline fun <
     reified P8,
     reified P9,
     reified P10,
-    > handler(
+> handler(
     param1: Param<P1>,
     param2: Param<P2>,
     param3: Param<P3>,
@@ -605,7 +605,7 @@ inline fun <
     reified P9,
     reified P10,
     reified P11,
-    > handler(
+> handler(
     param1: Param<P1>,
     param2: Param<P2>,
     param3: Param<P3>,

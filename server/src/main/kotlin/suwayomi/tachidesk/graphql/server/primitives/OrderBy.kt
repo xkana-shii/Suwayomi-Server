@@ -1,7 +1,9 @@
 package suwayomi.tachidesk.graphql.server.primitives
 
+import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.dao.id.EntityID
@@ -26,6 +28,16 @@ interface Order<By : OrderBy<*>> {
     val by: By
     val byType: SortOrder?
 }
+
+fun SortOrder.reversed() =
+    when (this) {
+        SortOrder.ASC -> SortOrder.DESC
+        SortOrder.DESC -> SortOrder.ASC
+        SortOrder.ASC_NULLS_FIRST -> SortOrder.DESC_NULLS_LAST
+        SortOrder.ASC_NULLS_LAST -> SortOrder.DESC_NULLS_FIRST
+        SortOrder.DESC_NULLS_FIRST -> SortOrder.ASC_NULLS_LAST
+        SortOrder.DESC_NULLS_LAST -> SortOrder.ASC_NULLS_FIRST
+    }
 
 fun SortOrder?.maybeSwap(value: Any?): SortOrder =
     if (value != null) {
@@ -64,6 +76,104 @@ fun <T> Query.applyBeforeAfter(
         }
     }
 }
+
+fun <T : OrderBy<*>, Id : Any> Query.applySort(
+    sort: List<Order<T>>,
+    before: Id?,
+    last: Id?,
+    reverse: Boolean = false,
+): Query {
+    sort.forEach { order ->
+        val orderByColumn = order.by.column
+        val orderType = order.byType.maybeSwap(last ?: before)
+
+        val finalOrderType =
+            if (reverse) {
+                orderType.reversed()
+            } else {
+                orderType
+            }
+
+        this.orderBy(orderByColumn to finalOrderType)
+    }
+
+    return this
+}
+
+data class PaginationInfo<T : Any>(
+    val total: Long,
+    val firstResult: T? = null,
+    val lastResult: T? = null,
+)
+
+/**
+ * Which parts of the pagination info a list query's caller selected.
+ *
+ * The total runs a COUNT over the whole filtered set, and the bounds (for
+ * `pageInfo.hasNextPage` / `hasPreviousPage`) run two more sorted queries over
+ * it, each once per request whatever the page size. A client that selects
+ * neither, such as a fixed window of nodes, shouldn't pay for them.
+ */
+data class PaginationNeeds(
+    val total: Boolean,
+    val bounds: Boolean,
+) {
+    companion object {
+        fun of(dataFetchingEnvironment: DataFetchingEnvironment): PaginationNeeds {
+            val selection = dataFetchingEnvironment.selectionSet
+            return PaginationNeeds(
+                total = selection.contains("totalCount"),
+                bounds = selection.containsAnyOf("pageInfo/hasNextPage", "pageInfo/hasPreviousPage"),
+            )
+        }
+    }
+}
+
+fun <T : OrderBy<*>, V : Any> Query.applySortAndGetPaginationInfo(
+    sort: List<Order<T>>,
+    before: Cursor?,
+    last: Int?,
+    needs: PaginationNeeds,
+    selectValue: (resultRow: ResultRow?) -> V?,
+): PaginationInfo<V> {
+    val baseQuery = this.copy()
+
+    this.applySort(sort, before, last)
+
+    return PaginationInfo(
+        total = if (needs.total) baseQuery.count() else 0,
+        firstResult =
+            if (needs.bounds) {
+                baseQuery
+                    .copy()
+                    .applySort(sort, before, last)
+                    .limit(1)
+                    .firstOrNull()
+                    ?.let(selectValue)
+            } else {
+                null
+            },
+        lastResult =
+            if (needs.bounds) {
+                baseQuery
+                    .copy()
+                    .applySort(sort, before, last, true)
+                    .limit(1)
+                    .firstOrNull()
+                    ?.let(selectValue)
+            } else {
+                null
+            },
+    )
+}
+
+fun <T : OrderBy<*>, Id : Any> Query.applySortAndGetPaginationInfo(
+    sort: List<Order<T>>,
+    before: Cursor?,
+    last: Int?,
+    idColumn: Column<EntityID<Id>>,
+    needs: PaginationNeeds,
+): PaginationInfo<Id> = applySortAndGetPaginationInfo(sort, before, last, needs) { it?.get(idColumn)?.value }
 
 @JvmName("greaterNotUniqueIntKey")
 fun <T : Comparable<T>> greaterNotUnique(

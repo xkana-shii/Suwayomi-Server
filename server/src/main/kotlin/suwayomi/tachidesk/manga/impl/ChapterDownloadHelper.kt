@@ -9,31 +9,32 @@ import suwayomi.tachidesk.manga.impl.download.fileProvider.ChaptersFilesProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.impl.ArchiveProvider
 import suwayomi.tachidesk.manga.impl.download.fileProvider.impl.FolderProvider
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
-import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
-import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
+import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
 import suwayomi.tachidesk.server.serverConfig
+import xyz.nulldev.androidcompat.util.SafePath
 import java.io.File
 import java.io.InputStream
 
 object ChapterDownloadHelper {
-    fun getImage(
+    suspend fun getImage(
         mangaId: Int,
         chapterId: Int,
         index: Int,
     ): Pair<InputStream, String> = provider(mangaId, chapterId).getImage().execute(index)
 
-    fun getImageCount(
+    suspend fun getImageCount(
         mangaId: Int,
         chapterId: Int,
     ): Int = provider(mangaId, chapterId).getImageCount()
 
-    fun delete(
+    suspend fun delete(
         mangaId: Int,
         chapterId: Int,
     ): Boolean = provider(mangaId, chapterId).delete()
@@ -49,8 +50,8 @@ object ChapterDownloadHelper {
         step: suspend (DownloadQueueItem?, Boolean) -> Unit,
     ): Boolean = provider(mangaId, chapterId).download().execute(download, scope, step)
 
-    // return the appropriate provider based on existing saved download type.
-    private fun provider(
+    // return the appropriate provider based on how the download was saved. For the logic is simple but will evolve when new types of downloads are available
+    private suspend fun provider(
         mangaId: Int,
         chapterId: Int,
     ): ChaptersFilesProvider<*> {
@@ -67,10 +68,15 @@ object ChapterDownloadHelper {
         return FolderProvider(mangaId, chapterId)
     }
 
-    fun getArchiveStreamWithSize(
+    suspend fun getArchiveStreamWithSize(
         mangaId: Int,
         chapterId: Int,
     ): Pair<InputStream, Long> = provider(mangaId, chapterId).getAsArchiveStream()
+
+    suspend fun getChapterArchiveSize(
+        mangaId: Int,
+        chapterId: Int,
+    ): Long = provider(mangaId, chapterId).getArchiveSize()
 
     private fun getChapterWithCbzFileName(chapterId: Int): Pair<ChapterDataClass, String> =
         transaction {
@@ -79,62 +85,74 @@ object ChapterDownloadHelper {
                     .select(ChapterTable.columns + MangaTable.columns)
                     .where { ChapterTable.id eq chapterId }
                     .firstOrNull() ?: throw IllegalArgumentException("ChapterId $chapterId not found")
-            val chapter = ChapterTable.toDataClass(row)
-            val mangaTitle = row[MangaTable.title]
 
-            val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
-            val fileName = "$scanlatorPart${chapter.name}"
-            chapter to fileName
+            val chapter = ChapterTable.toDataClass(row)
+            val mangaTitle = row[MangaTable.title].trim()
+
+            val scanlatorName = chapter.scanlator?.trim()?.takeIf { it.isNotEmpty() }
+            val chapterName = chapter.name.trim().takeIf { it.isNotEmpty() }
+
+            val fileName =
+                buildString {
+                    append(mangaTitle)
+                    append(" - ")
+
+                    if (chapterName != null) {
+                        append(chapterName)
+                    } else if (chapter.chapterNumber >= 0f) {
+                        // chapterNumber is stored as Float, drop .0 for whole numbers.
+                        val formatNumber =
+                            if (chapter.chapterNumber % 1 == 0f) {
+                                chapter.chapterNumber.toInt().toString()
+                            } else {
+                                chapter.chapterNumber.toString()
+                            }
+                        append("#$formatNumber")
+                    } else {
+                        // Fallback when neither name nor valid chapter number exists
+                        append("#${chapter.index}")
+                    }
+
+                    if (scanlatorName != null) {
+                        append(" [")
+                        append(scanlatorName)
+                        append("]")
+                    }
+                    append(".cbz")
+                }
+
+            // Sanitize filename for OS compatibility
+            val safeFileName = SafePath.buildValidFilename(fileName)
+
+            Pair(chapter, safeFileName)
         }
 
-    // Added functions requested: return CBZ stream / metadata (filename + size).
-    fun getCbzForDownload(
+    suspend fun getCbzForDownload(
+        userId: Int,
         chapterId: Int,
         markAsRead: Boolean?,
     ): Triple<InputStream, String, Long> {
-        val (chapterData, baseName) = transaction {
-            val row =
-                (ChapterTable innerJoin MangaTable)
-                    .select(ChapterTable.columns + MangaTable.columns)
-                    .where { ChapterTable.id eq chapterId }
-                    .firstOrNull() ?: throw IllegalArgumentException("ChapterId $chapterId not found")
-            val chapter = ChapterTable.toDataClass(row)
-            val mangaTitle = row[MangaTable.title]
-            val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
-            val fileName = "$mangaTitle - $scanlatorPart${chapter.name}.cbz"
-            chapter to fileName
-        }
+        val (chapterData, fileName) = getChapterWithCbzFileName(chapterId)
 
-        val cbzStreamWithSize = provider(chapterData.mangaId, chapterData.id).getAsArchiveStream()
+        val cbzFile = provider(chapterData.mangaId, chapterData.id).getAsArchiveStream()
 
         if (markAsRead == true) {
             Chapter.modifyChapter(
+                userId = userId,
                 chapterData.mangaId,
                 chapterData.index,
                 isRead = true,
                 isBookmarked = null,
-                isFillermarked = null,
                 markPrevRead = null,
                 lastPageRead = null,
             )
         }
 
-        return Triple(cbzStreamWithSize.first, baseName, cbzStreamWithSize.second)
+        return Triple(cbzFile.first, fileName, cbzFile.second)
     }
 
-    fun getCbzMetadataForDownload(chapterId: Int): Pair<String, Long> { // fileName, fileSize
-        val (chapterData, fileName) = transaction {
-            val row =
-                (ChapterTable innerJoin MangaTable)
-                    .select(ChapterTable.columns + MangaTable.columns)
-                    .where { ChapterTable.id eq chapterId }
-                    .firstOrNull() ?: throw IllegalArgumentException("ChapterId $chapterId not found")
-            val chapter = ChapterTable.toDataClass(row)
-            val mangaTitle = row[MangaTable.title]
-            val scanlatorPart = chapter.scanlator?.let { "[$it] " } ?: ""
-            val fullName = "$mangaTitle - $scanlatorPart${chapter.name}.cbz"
-            chapter to fullName
-        }
+    suspend fun getCbzMetadataForDownload(chapterId: Int): Pair<String, Long> { // fileName, fileSize
+        val (chapterData, fileName) = getChapterWithCbzFileName(chapterId)
 
         val fileSize = provider(chapterData.mangaId, chapterData.id).getArchiveSize()
 
@@ -151,11 +169,12 @@ object ChapterDownloadHelper {
      * inside an existing CBZ. If you require updating the CBZ contents (e.g. to add/update ComicInfo.xml),
      * extract -> createComicInfoFile(...) -> re-create the CBZ will be necessary.
      */
-    fun migrateDownloadedChapterFilename(chapterId: Int): Boolean {
+    suspend fun migrateDownloadedChapterFilename(chapterId: Int): Boolean {
         // Fetch chapter + manga id
-        val chapterRow = transaction {
-            ChapterTable.select(ChapterTable.columns).where { ChapterTable.id eq chapterId }.firstOrNull()
-        } ?: return false
+        val chapterRow =
+            transaction {
+                ChapterTable.select(ChapterTable.columns).where { ChapterTable.id eq chapterId }.firstOrNull()
+            } ?: return false
 
         val mangaId = chapterRow[ChapterTable.manga].value
 

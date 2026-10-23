@@ -12,6 +12,7 @@ import com.zaxxer.hikari.HikariDataSource
 import de.neonew.exposed.migrations.loadMigrationsFrom
 import de.neonew.exposed.migrations.runMigrations
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.DatabaseConfig
 import org.jetbrains.exposed.v1.core.ExperimentalKeywordApi
 import org.jetbrains.exposed.v1.core.Schema
@@ -62,8 +63,7 @@ object DBManager {
                     }
                 }
 
-                // Optimized for Raspberry Pi / Low memory environments
-                maximumPoolSize = 6 // Moderate pool for better concurrency
+                maximumPoolSize = serverConfig.hikariMaxPoolSize.value
                 minimumIdle = 2 // Keep 2 idle connections for responsiveness
                 connectionTimeout = 45.seconds.inWholeMilliseconds // more tolerance for slow devices
                 idleTimeout = 5.minutes.inWholeMilliseconds // close idle connections faster
@@ -90,12 +90,13 @@ object DBManager {
 
         val dbConfig =
             DatabaseConfig {
+                warnLongQueriesDuration = 500
                 useNestedTransactions = true
                 @OptIn(ExperimentalKeywordApi::class)
                 preserveKeywordCasing = false
                 defaultSchema =
                     when (serverConfig.databaseType.value) {
-                        DatabaseType.POSTGRESQL -> Schema("suwayomi")
+                        DatabaseType.POSTGRESQL -> Schema(serverConfig.databaseSchema.value)
                         DatabaseType.H2 -> null
                     }
             }
@@ -140,6 +141,8 @@ object DBManager {
                 "Idle: ${ds.hikariPoolMXBean.idleConnections}, " +
                 "Waiting: ${ds.hikariPoolMXBean.threadsAwaitingConnection}"
         }
+
+    val format = Json { prettyPrint = false }
 }
 
 private val logger = KotlinLogging.logger {}
@@ -176,7 +179,7 @@ fun databaseUp(givenDb: Database? = null) {
             transaction {
                 val schema =
                     Schema(
-                        "suwayomi",
+                        serverConfig.databaseSchema.value,
                         serverConfig.databaseUsername.value.takeIf { it.isNotBlank() },
                     )
                 SchemaUtils.createSchema(schema)
@@ -184,6 +187,7 @@ fun databaseUp(givenDb: Database? = null) {
         }
         val migrations = loadMigrationsFrom("suwayomi.tachidesk.server.database.migration", ServerConfig::class.java)
         runMigrations(migrations)
+        ForkSchema.ensure()
     } catch (e: Exception) {
         logger.error(e) { "Error up-to-database migration" }
         shutdownApp(ExitCode.DbMigrationFailure)

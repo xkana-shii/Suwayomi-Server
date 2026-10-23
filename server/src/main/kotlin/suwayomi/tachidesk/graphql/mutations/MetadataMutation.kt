@@ -2,16 +2,14 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
+import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import eu.kanade.tachiyomi.source.local.LocalSource
 import eu.kanade.tachiyomi.source.local.image.LocalCoverManager
 import eu.kanade.tachiyomi.source.local.io.LocalSourceFileSystem
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.inList
-import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
@@ -26,8 +24,8 @@ import suwayomi.tachidesk.manga.impl.metadata.MetadataProvider
 import suwayomi.tachidesk.manga.impl.metadata.MyAnimeListMetadataProvider
 import suwayomi.tachidesk.manga.impl.util.getThumbnailDownloadPath
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse
-import suwayomi.tachidesk.manga.model.table.MangaMetaTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.server.ApplicationDirs
 import suwayomi.tachidesk.server.JavalinSetup.future
 import uy.kohesive.injekt.injectLazy
@@ -115,7 +113,11 @@ class MetadataMutation {
     )
 
     @RequireAuth
-    fun applyMetadataMatch(input: ApplyMetadataMatchInput): CompletableFuture<ApplyMetadataMatchPayload?> {
+    fun applyMetadataMatch(
+        @GraphQLIgnore
+        userId: Int,
+        input: ApplyMetadataMatchInput,
+    ): CompletableFuture<ApplyMetadataMatchPayload?> {
         val (clientMutationId, mangaId, providerName, externalId, includeCover) = input
 
         return future {
@@ -168,7 +170,7 @@ class MetadataMutation {
                 metaUpdates[Manga.OVERRIDE_DESCRIPTION_KEY] = it
             }
 
-            Manga.modifyMangasMetas(mapOf(mangaId to metaUpdates))
+            Manga.modifyMangasMetas(userId, mapOf(mangaId to metaUpdates))
 
             val overrideDeletes = mutableListOf<String>()
             if (details.title.isNullOrBlank()) {
@@ -185,11 +187,7 @@ class MetadataMutation {
             }
 
             if (overrideDeletes.isNotEmpty()) {
-                transaction {
-                    MangaMetaTable.deleteWhere {
-                        (MangaMetaTable.ref eq mangaId) and (MangaMetaTable.key inList overrideDeletes)
-                    }
-                }
+                Manga.deleteSharedMetadataOverrides(mangaId, overrideDeletes)
             }
 
             val sourceId = row[MangaTable.sourceReference]
@@ -197,6 +195,7 @@ class MetadataMutation {
                 downloadAndSaveCover(mangaId, details.coverUrl, sourceId, row[MangaTable.url])
 
                 Manga.modifyMangasMetas(
+                    userId,
                     mapOf(
                         mangaId to
                             mapOf(
@@ -211,7 +210,13 @@ class MetadataMutation {
 
             val manga =
                 transaction {
-                    MangaType(MangaTable.selectAll().where { MangaTable.id eq mangaId }.first())
+                    MangaType(
+                        MangaTable
+                            .getWithUserData(userId)
+                            .selectAll()
+                            .where { MangaTable.id eq mangaId }
+                            .first(),
+                    )
                 }
 
             ApplyMetadataMatchPayload(

@@ -9,16 +9,12 @@ package suwayomi.tachidesk.server
 
 import android.os.Looper
 import ch.qos.logback.classic.Level
-import com.typesafe.config.Config
-import com.typesafe.config.ConfigException
 import com.typesafe.config.ConfigRenderOptions
-import com.typesafe.config.ConfigValue
-import com.typesafe.config.parser.ConfigDocument
+import dorkbox.updates.Updates
 import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.createAppModule
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.local.LocalSource
-import io.github.config4k.toConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.json.JavalinJackson3
 import io.javalin.json.JsonMapper
@@ -30,16 +26,29 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.cef.network.CefCookieManager
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import suwayomi.tachidesk.global.impl.KcefWebView.Companion.toCefCookie
+import suwayomi.tachidesk.global.impl.sync.SyncManager
+import suwayomi.tachidesk.global.impl.util.Bcrypt
+import suwayomi.tachidesk.global.model.table.UserAccountTable
 import suwayomi.tachidesk.graphql.types.DatabaseType
 import suwayomi.tachidesk.i18n.LocalizationHelper
 import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupExport
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
+import suwayomi.tachidesk.manga.impl.extension.Extension
+import suwayomi.tachidesk.manga.impl.extension.ExtensionStoreService
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.impl.update.Updater
 import suwayomi.tachidesk.manga.impl.util.lang.renameTo
@@ -50,8 +59,8 @@ import suwayomi.tachidesk.server.util.AppMutex.handleAppMutex
 import suwayomi.tachidesk.server.util.CEFManager
 import suwayomi.tachidesk.server.util.ConfigTypeRegistration
 import suwayomi.tachidesk.server.util.ExitCode
-import suwayomi.tachidesk.server.util.systemtray.SystemTray
 import suwayomi.tachidesk.server.util.shutdownApp
+import suwayomi.tachidesk.server.util.systemtray.SystemTray
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import xyz.nulldev.androidcompat.AndroidCompat
@@ -70,11 +79,7 @@ import java.net.Authenticator
 import java.net.PasswordAuthentication
 import java.security.Security
 import java.util.Locale
-import kotlin.concurrent.thread
-import kotlin.io.path.Path
-import kotlin.io.path.createDirectories
-import kotlin.io.path.div
-import kotlin.math.roundToInt
+import kotlin.random.Random
 
 private val logger = KotlinLogging.logger {}
 
@@ -99,6 +104,8 @@ class ApplicationDirs(
         get() = "$downloadsRoot/thumbnails"
     val mangaDownloadsRoot
         get() = "$downloadsRoot/mangas"
+
+    val cacheDir = "$dataRoot/cache"
 }
 
 @Suppress("DEPRECATION")
@@ -124,7 +131,14 @@ data class DatabaseSettings(
     val databaseUrl: String,
     val databaseUsername: String,
     val databasePassword: String,
+    val databaseSchema: String,
     val useHikariConnectionPool: Boolean,
+    val hikariMaxPoolSize: Int,
+)
+
+data class AuthSettings(
+    val authUsername: String,
+    val authPassword: String,
 )
 
 val androidCompat by lazy { AndroidCompat() }
@@ -133,88 +147,17 @@ fun setupLogLevelUpdating(
     configFlow: MutableStateFlow<Boolean>,
     loggerNames: List<String>,
     defaultLevel: Level = Level.INFO,
+    debugLevel: Level = Level.DEBUG,
 ) {
     serverConfig.subscribeTo(
         configFlow,
         { debugLogsEnabled ->
             loggerNames.forEach { loggerName ->
-                setLogLevelFor(loggerName, if (debugLogsEnabled) Level.DEBUG else defaultLevel)
+                setLogLevelFor(loggerName, if (debugLogsEnabled) debugLevel else defaultLevel)
             }
         },
         ignoreInitialValue = false,
     )
-}
-
-fun migrateConfigValue(
-    configDocument: ConfigDocument,
-    config: Config,
-    configKey: String,
-    toConfigKey: String,
-    toType: (ConfigValue) -> Any?,
-): ConfigDocument {
-    try {
-        val configValue = config.getValue(configKey)
-        val typedValue = toType(configValue)
-        if (typedValue != null) {
-            logger.debug { "Migrating config value: $configKey -> $toConfigKey" }
-            return configDocument.withValue(
-                toConfigKey,
-                typedValue.toConfig("internal").getValue("internal"),
-            )
-        }
-    } catch (_: ConfigException) {
-        // ignore, likely already migrated
-    }
-
-    return configDocument
-}
-
-fun migrateConfig(
-    configDocument: ConfigDocument,
-    config: Config,
-): ConfigDocument {
-    var updatedConfig = configDocument
-
-    val settingsRequiringMigration = SettingsRegistry.getAll().filterValues { it.deprecated?.replaceWith != null }
-    settingsRequiringMigration.forEach { (name, data) ->
-        val configKey = "server.$name"
-        val toConfigKey = "server.${data.deprecated!!.replaceWith}"
-
-        try {
-            config.getValue(configKey)
-        } catch (_: ConfigException) {
-            // Ignore, no migration required
-            return@forEach
-        }
-
-        logger.debug { "Migrating config value: $configKey -> $toConfigKey" }
-
-        try {
-            if (data.deprecated!!.migrateConfig != null) {
-                updatedConfig = data.deprecated!!.migrateConfig!!(config.getValue(configKey), updatedConfig)
-                return@forEach
-            }
-
-            if (data.deprecated!!.migrateConfigValue != null) {
-                updatedConfig =
-                    migrateConfigValue(
-                        updatedConfig,
-                        config,
-                        configKey,
-                        toConfigKey,
-                        data.deprecated!!.migrateConfigValue!!,
-                    )
-                return@forEach
-            }
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to migrate config value: $configKey -> $toConfigKey" }
-            return@forEach
-        }
-
-        shutdownApp(ExitCode.ConfigMigrationMisconfiguredFailure)
-    }
-
-    return updatedConfig
 }
 
 fun serverModule(applicationDirs: ApplicationDirs): Module =
@@ -266,6 +209,9 @@ fun applicationSetup() {
     )
 
     setupLogLevelUpdating(serverConfig.debugLogsEnabled, listOf(BASE_LOGGER_NAME))
+    setupLogLevelUpdating(serverConfig.debugLogsEnabled, listOf("Exposed"), defaultLevel = Level.OFF, debugLevel = Level.WARN)
+    setLogLevelFor("org.eclipse.jetty", Level.OFF)
+    setLogLevelFor("com.zaxxer.hikari", Level.WARN)
 
     logger.info { "Running Suwayomi-Server ${BuildConfig.VERSION}" }
 
@@ -345,6 +291,9 @@ fun applicationSetup() {
     // start app
     androidCompat.startApp(app)
 
+    // Delete files before any extension-related logic can be executed that causes the jars to get loaded
+    Extension.cleanupExtensionFiles()
+
     // Initialize NetworkHelper early
     Injekt
         .get<NetworkHelper>()
@@ -361,7 +310,16 @@ fun applicationSetup() {
             }
         } else {
             // make sure the user config file is up-to-date
-            GlobalConfigManager.updateUserConfig { migrateConfig(this, it) }
+            GlobalConfigManager.updateUserConfig {
+                try {
+                    migrateConfig(this, it)
+                } catch (e: Throwable) {
+                    logger.error(e) { "Failed to migrate config" }
+                    shutdownApp(ExitCode.ConfigMigrationFailure)
+                }
+
+                this
+            }
         }
     } catch (e: Exception) {
         logger.error(e) { "Exception while creating initial server.conf" }
@@ -392,9 +350,11 @@ fun applicationSetup() {
         "Localization service initialized. Supported languages: ${LocalizationHelper.getSupportedLocales()}"
     }
 
-    runMigrations(applicationDirs)
-
-    databaseUp()
+    runBlocking {
+        runMigrations(applicationDirs) {
+            databaseUp()
+        }
+    }
 
     try {
         LocalSource.register()
@@ -409,19 +369,23 @@ fun applicationSetup() {
             serverConfig.databaseUrl,
             serverConfig.databaseUsername,
             serverConfig.databasePassword,
+            serverConfig.databaseSchema,
             serverConfig.useHikariConnectionPool,
+            serverConfig.hikariMaxPoolSize,
         ) { vargs ->
             DatabaseSettings(
-                vargs[0] as DatabaseType,
-                vargs[1] as String,
-                vargs[2] as String,
-                vargs[3] as String,
-                vargs[4] as Boolean,
+                databaseType = vargs[0] as DatabaseType,
+                databaseUrl = vargs[1] as String,
+                databaseUsername = vargs[2] as String,
+                databasePassword = vargs[3] as String,
+                databaseSchema = vargs[4] as String,
+                useHikariConnectionPool = vargs[5] as Boolean,
+                hikariMaxPoolSize = vargs[6] as Int,
             )
         }.distinctUntilChanged(),
-        { (databaseType, databaseUrl, _databaseUsername, _databasePassword, hikariCp) ->
+        { (databaseType, databaseUrl, _databaseUsername, _databasePassword, databaseSchema, hikariCp, hikariMaxPoolSize) ->
             logger.info {
-                "Database changed - type=$databaseType url=$databaseUrl, username=[REDACTED], password=[REDACTED], hikaricp=$hikariCp"
+                "Database changed - type=$databaseType url=$databaseUrl, username=[REDACTED], password=[REDACTED], schema=$databaseSchema, hikaricp=$hikariCp, hikariMaxPoolSize=$hikariMaxPoolSize"
             }
             databaseUp()
 
@@ -431,6 +395,7 @@ fun applicationSetup() {
     )
 
     // create system tray
+    Updates.ENABLE = false
     serverConfig.subscribeTo(
         serverConfig.systemTrayEnabled,
         { systemTrayEnabled ->
@@ -447,9 +412,6 @@ fun applicationSetup() {
         },
         ignoreInitialValue = false,
     )
-
-    setLogLevelFor("org.eclipse.jetty", Level.OFF)
-    setLogLevelFor("com.zaxxer.hikari", Level.WARN)
 
     // socks proxy settings
     serverConfig.subscribeTo(
@@ -517,8 +479,64 @@ fun applicationSetup() {
     // start DownloadManager and restore + resume downloads
     DownloadManager.restoreAndResumeDownloads()
 
+    SyncManager.scheduleSyncTask()
+
     // asynchronously initialize CEF
     GlobalScope.launch {
         CEFManager.init()
     }
+
+    serverConfig.subscribeTo(
+        serverConfig.extensionStores,
+        { _ ->
+            ExtensionStoreService.syncPrefsToDb()
+        },
+        ignoreInitialValue = false,
+    )
+
+    serverConfig.subscribeTo(
+        combine<Any, AuthSettings>(
+            serverConfig.authUsername,
+            serverConfig.authPassword,
+        ) { vargs ->
+            AuthSettings(
+                authUsername = vargs[0] as String,
+                authPassword = vargs[1] as String,
+            )
+        },
+        onChange = { settings ->
+            try {
+                transaction {
+                    val usernameSetting = settings.authUsername.trim().ifEmpty { "admin" }
+
+                    val username =
+                        if (
+                            UserAccountTable
+                                .select(UserAccountTable.id)
+                                .where {
+                                    (UserAccountTable.username.lowerCase() eq usernameSetting.lowercase()) and
+                                        (UserAccountTable.id neq 1)
+                                }.empty()
+                        ) {
+                            usernameSetting
+                        } else {
+                            val username = usernameSetting + Random.nextInt(9999)
+                            logger.warn { "Username taken, username now `$username`" }
+                            username
+                        }
+
+                    UserAccountTable.update({ UserAccountTable.id eq 1 }) {
+                        it[UserAccountTable.username] = username
+                        it[UserAccountTable.password] =
+                            Bcrypt.encryptPassword(
+                                settings.authPassword.trim().ifEmpty { "password" },
+                            )
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Unable to update admin username" }
+            }
+        },
+        ignoreInitialValue = false,
+    )
 }

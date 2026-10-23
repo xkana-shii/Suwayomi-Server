@@ -64,10 +64,12 @@ import org.cef.callback.CefCallback
 import org.cef.callback.CefMediaAccessCallback
 import org.cef.callback.CefQueryCallback
 import org.cef.handler.CefDisplayHandlerAdapter
+import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.cef.handler.CefLoadHandler
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefMessageRouterHandlerAdapter
 import org.cef.handler.CefPermissionHandler
+import org.cef.handler.CefRenderHandlerAdapter
 import org.cef.handler.CefRequestHandler
 import org.cef.handler.CefRequestHandlerAdapter
 import org.cef.handler.CefResourceHandler
@@ -82,10 +84,13 @@ import org.cef.network.CefPostDataElement
 import org.cef.network.CefRequest
 import org.cef.network.CefResponse
 import org.koin.mp.KoinPlatformTools
+import java.awt.Rectangle
 import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.util.concurrent.Executor
+import javax.swing.JPanel
 import kotlin.math.min
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.declaredMemberFunctions
@@ -97,6 +102,7 @@ class KcefWebViewProvider(
     private val settings = KcefWebSettings()
     private var viewClient = WebViewClient()
     private var chromeClient = WebChromeClient()
+    private val renderHandler = RenderHandler()
     private val mappings: MutableList<FunctionMapping> = mutableListOf()
     private val urlHttpMapping: MutableMap<String, String> = mutableMapOf()
     private var initialRequestData: InitialRequestData? = null
@@ -116,6 +122,36 @@ class KcefWebViewProvider(
 
     interface InitBrowserHandler {
         fun init(provider: KcefWebViewProvider): Unit
+    }
+
+    private inner class LifeSpanHandler : CefLifeSpanHandlerAdapter() {
+        override fun onAfterCreated(browser: CefBrowser) {
+            val ua = settings.userAgentString
+            val args =
+                settings.getUserAgentMetadata()?.let {
+                    Log.d(TAG, "Using user-agent $ua with metadata $it")
+                    """
+                {
+                    "userAgent": ${Json.encodeToString(ua)},
+                    "userAgentMetadata": ${Json.encodeToString(it)}
+                }
+                """
+                } ?: run {
+                    Log.d(TAG, "Using user-agent $ua without metadata")
+                    """
+                {
+                    "userAgent": ${Json.encodeToString(ua)}
+                }
+                """
+                }
+            browser.devToolsClient.executeDevToolsMethod("Emulation.setUserAgentOverride", args).whenComplete { res, ex ->
+                if (ex != null) {
+                    Log.e(TAG, "Failed to set user agent", ex)
+                } else {
+                    Log.v(TAG, "Successfully set user agent: $res")
+                }
+            }
+        }
     }
 
     private data class InitialRequestData(
@@ -430,7 +466,6 @@ class KcefWebViewProvider(
         ): Boolean {
             initialRequestData?.apply(request)
             initialRequestData = null
-            request.setHeaderByName("user-agent", settings.userAgentString, true)
 
             // TODO: we should be calling this on the handler, since CEF calls us on its IO thread
             // thus if a client tried to use WebView#loadUrl as the docs suggest, this fails
@@ -522,6 +557,21 @@ class KcefWebViewProvider(
         }
     }
 
+    private class RenderHandler : CefRenderHandlerAdapter() {
+        override fun getViewRect(browser: CefBrowser): Rectangle = Rectangle(0, 0, 1280, 2856)
+
+        override fun onPaint(
+            browser: CefBrowser,
+            popup: Boolean,
+            dirtyRects: Array<Rectangle>,
+            buffer: ByteBuffer,
+            width: Int,
+            height: Int,
+        ) {
+            // do nothing
+        }
+    }
+
     override fun init(
         javaScriptInterfaces: Map<String, Any>?,
         privateBrowsing: Boolean,
@@ -531,6 +581,7 @@ class KcefWebViewProvider(
         kcefClient =
             runBlocking {
                 CefHelper.createClient().apply {
+                    addLifeSpanHandler(LifeSpanHandler())
                     addDisplayHandler(DisplayHandler())
                     addLoadHandler(LoadHandler())
                     addRequestHandler(RequestHandler())
@@ -585,7 +636,7 @@ class KcefWebViewProvider(
         browser?.close(true)
         browser?.dispose()
         browser = null
-        kcefClient?.dispose()
+        kcefClient?.disposeWithJsHandler()
         kcefClient = null
     }
 
@@ -617,7 +668,7 @@ class KcefWebViewProvider(
             kcefClient!!
                 .createBrowser(
                     loadUrl,
-                    CefRendering.OFFSCREEN,
+                    CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
                     false,
                 ).apply {
                     // NOTE: Without this, we don't seem to be receiving any events
@@ -642,7 +693,7 @@ class KcefWebViewProvider(
             kcefClient!!
                 .createBrowser(
                     url,
-                    CefRendering.OFFSCREEN,
+                    CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
                     false,
                 ).apply {
                     // NOTE: Without this, we don't seem to be receiving any events
@@ -676,7 +727,7 @@ class KcefWebViewProvider(
             kcefClient!!
                 .createBrowser(
                     url,
-                    CefRendering.OFFSCREEN,
+                    CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
                     false,
                 ).apply {
                     // NOTE: Without this, we don't seem to be receiving any events
@@ -880,7 +931,10 @@ class KcefWebViewProvider(
         )
     }
 
-    override fun removeJavascriptInterface(interfaceName: String): Unit = throw RuntimeException("Stub!")
+    override fun removeJavascriptInterface(interfaceName: String) {
+        val removed = mappings.removeAll { it.interfaceName == interfaceName }
+        Log.v(TAG, if (removed) "Removed interface mappings for $interfaceName" else "No interface mappings for $interfaceName to remove")
+    }
 
     override fun createWebMessageChannel(): Array<WebMessagePort> = throw RuntimeException("Stub!")
 

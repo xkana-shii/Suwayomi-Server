@@ -6,11 +6,13 @@ import okhttp3.Response
 import suwayomi.tachidesk.manga.impl.track.tracker.mangabaka.dto.MangaBakaOAuth
 import uy.kohesive.injekt.injectLazy
 
-class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
-
+class MangaBakaInterceptor(
+    private val userId: Int,
+    private val mangaBaka: MangaBaka,
+) : Interceptor {
     private val json: Json by injectLazy()
 
-    private var oauth: MangaBakaOAuth? = mangaBaka.restoreToken()
+    private var oauth: MangaBakaOAuth? = mangaBaka.restoreToken(userId)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
@@ -27,7 +29,8 @@ class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
             }
         }
 
-        return originalRequest.newBuilder()
+        return originalRequest
+            .newBuilder()
             .addHeader("Authorization", "Bearer ${currentAuth.accessToken}")
             .build()
             .let(chain::proceed)
@@ -36,6 +39,6 @@ class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
     fun setAuth(oauth: MangaBakaOAuth?) {
         this.oauth = oauth
 
-        mangaBaka.saveToken(oauth)
+        mangaBaka.saveToken(userId, oauth)
     }
 }

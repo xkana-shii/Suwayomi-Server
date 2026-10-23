@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.graphql.queries
 
+import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import io.javalin.http.UploadedFile
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.BackupCreateStatus
@@ -30,8 +31,12 @@ class BackupQuery {
     )
 
     @RequireAuth
-    fun validateBackup(input: ValidateBackupInput): ValidateBackupResult {
-        val result = ProtoBackupValidator.validate(input.backup.content())
+    fun validateBackup(
+        @GraphQLIgnore
+        userId: Int,
+        input: ValidateBackupInput,
+    ): ValidateBackupResult {
+        val result = ProtoBackupValidator.validate(userId, input.backup.content())
         return ValidateBackupResult(
             result.missingSourceIds.map { ValidateBackupSource(it.id, it.name) },
             result.missingTrackers.map { ValidateBackupTracker(it) },
