@@ -65,9 +65,6 @@ class MangaBaka(
 
     override fun getScoreList(userId: Int): List<String> =
         when (trackPreferences.getScoreType(userId, this)) {
-            // 1, 2, ..., 99, 100
-            STEP_1 -> IntRange(0, 100).map(Int::toString)
-
             // 5, 10, ..., 95, 100
             STEP_5 -> IntRange(0, 100).step(5).map(Int::toString)
 
@@ -80,7 +77,8 @@ class MangaBaka(
             // 25, 50, 75, 100
             STEP_25 -> IntRange(0, 100).step(25).map(Int::toString)
 
-            else -> throw Exception("Unknown score type")
+            // 1, 2, ..., 99, 100 (also used before the score type is known, i.e. while not logged in)
+            else -> IntRange(0, 100).map(Int::toString)
         }
 
     override fun displayScore(
