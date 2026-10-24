@@ -1,5 +1,7 @@
 package suwayomi.tachidesk.graphql.types
 
+import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -26,6 +28,8 @@ class TrackerType(
     val supportsTrackDeletion: Boolean,
     val supportsReadingDates: Boolean,
     val supportsPrivateTracking: Boolean,
+    @GraphQLDescription("fork: the tracker can provide manga metadata (see trackerMangaMetadata)")
+    val supportsMangaMetadata: Boolean = false,
 ) : Node {
     constructor(tracker: Tracker, userId: Int) : this(
         tracker.isLoggedIn(userId),
@@ -45,6 +49,7 @@ class TrackerType(
         tracker is DeletableTracker,
         tracker.supportsReadingDates,
         tracker.supportsPrivateTracking,
+        TrackerMetadata.supportsMetadata(tracker.id),
     )
 
     fun statuses(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<List<TrackStatusType>> =

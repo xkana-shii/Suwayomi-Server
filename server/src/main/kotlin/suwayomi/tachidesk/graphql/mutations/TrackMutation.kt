@@ -2,6 +2,8 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackerEdits
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
@@ -366,6 +368,68 @@ class TrackMutation {
             UpdateTrackPayload(
                 input.clientMutationId,
                 trackRecord?.let { TrackRecordType(it) },
+            )
+        }
+
+    // fork (Komikku port): one edit for every tracker of a manga
+
+    data class UpdateTrackRecordsUnifiedInput(
+        val clientMutationId: String? = null,
+        val mangaId: Int,
+        @GraphQLDescription("Translated to each tracker's status; trackers without an equivalent are skipped")
+        val status: UnifiedTrackStatus? = null,
+        val lastChapterRead: Double? = null,
+        @GraphQLDescription("0-10, converted to the closest score of each tracker's scale")
+        val score: Double? = null,
+        @GraphQLDescription("Skipped for trackers without reading dates")
+        val startDate: Long? = null,
+        @GraphQLDescription("Skipped for trackers without reading dates")
+        val finishDate: Long? = null,
+    )
+
+    data class UnifiedTrackEditResultType(
+        val recordId: Int,
+        val trackerId: Int,
+        val outcome: UnifiedTrackerEdits.Outcome,
+        val messages: List<String>,
+    )
+
+    data class UpdateTrackRecordsUnifiedPayload(
+        val clientMutationId: String?,
+        val results: List<UnifiedTrackEditResultType>,
+        val trackRecords: List<TrackRecordType>,
+    )
+
+    @RequireAuth
+    fun updateTrackRecordsUnified(
+        @GraphQLIgnore
+        userId: Int,
+        input: UpdateTrackRecordsUnifiedInput,
+    ): CompletableFuture<UpdateTrackRecordsUnifiedPayload> =
+        future {
+            val results =
+                UnifiedTrackerEdits.apply(
+                    userId,
+                    input.mangaId,
+                    UnifiedTrackerEdits.Edit(
+                        status = input.status,
+                        lastChapterRead = input.lastChapterRead,
+                        score = input.score,
+                        startDate = input.startDate,
+                        finishDate = input.finishDate,
+                    ),
+                )
+            val trackRecords =
+                transaction {
+                    TrackRecordTable
+                        .selectAll()
+                        .where { (TrackRecordTable.mangaId eq input.mangaId) and (TrackRecordTable.user eq userId) }
+                        .map { TrackRecordType(it) }
+                }
+            UpdateTrackRecordsUnifiedPayload(
+                input.clientMutationId,
+                results.map { UnifiedTrackEditResultType(it.recordId, it.trackerId, it.outcome, it.messages) },
+                trackRecords,
             )
         }
 }

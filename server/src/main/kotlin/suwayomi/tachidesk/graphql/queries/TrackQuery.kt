@@ -1,5 +1,8 @@
 package suwayomi.tachidesk.graphql.queries
 
+import suwayomi.tachidesk.manga.model.table.MangaStatus
+import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
@@ -48,6 +51,43 @@ import suwayomi.tachidesk.server.JavalinSetup.future
 import java.util.concurrent.CompletableFuture
 
 class TrackQuery {
+    data class TrackerMangaMetadataType(
+        val trackerId: Int,
+        val title: String?,
+        val author: String?,
+        val artist: String?,
+        val description: String?,
+        @GraphQLDescription("Trimmed, without blank and case-insensitive duplicate tags")
+        val genre: List<String>,
+        val status: MangaStatus?,
+        val thumbnailUrl: String?,
+    )
+
+    @GraphQLDescription(
+        "fork (Komikku port): the manga metadata of the manga's binding with the tracker, to fill the metadata editor. " +
+            "Nothing is saved.",
+    )
+    @RequireAuth
+    fun trackerMangaMetadata(
+        @GraphQLIgnore
+        userId: Int,
+        mangaId: Int,
+        trackerId: Int,
+    ): CompletableFuture<TrackerMangaMetadataType> =
+        future {
+            val details = TrackerMetadata.getMetadata(userId, mangaId, trackerId)
+            TrackerMangaMetadataType(
+                trackerId = trackerId,
+                title = details.title?.takeIf { it.isNotBlank() },
+                author = details.author?.takeIf { it.isNotBlank() },
+                artist = details.artist?.takeIf { it.isNotBlank() },
+                description = details.description?.takeIf { it.isNotBlank() },
+                genre = details.genre.orEmpty(),
+                status = details.status?.let { MangaStatus.valueOf(it) },
+                thumbnailUrl = details.coverUrl?.takeIf { it.isNotBlank() },
+            )
+        }
+
     @RequireAuth
     fun tracker(
         dataFetchingEnvironment: DataFetchingEnvironment,
