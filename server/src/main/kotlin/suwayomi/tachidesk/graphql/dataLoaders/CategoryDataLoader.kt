@@ -115,7 +115,8 @@ open class SubtreeMangaCountForCategoryDataLoader(
     /** false: hidden categories (and the subtrees below them) do not contribute, like the library tabs */
     private val includeHidden: Boolean = true,
 ) : KotlinDataLoader<Int, Int> {
-    override val dataLoaderName = if (includeHidden) "SubtreeMangaCountForCategoryDataLoader" else "VisibleSubtreeMangaCountForCategoryDataLoader"
+    override val dataLoaderName =
+        if (includeHidden) "SubtreeMangaCountForCategoryDataLoader" else "VisibleSubtreeMangaCountForCategoryDataLoader"
 
     override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, Int> =
         DataLoaderFactory.newDataLoader { ids ->
