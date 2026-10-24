@@ -7,6 +7,7 @@ package suwayomi.tachidesk.manga.impl.track
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import com.expediagroup.graphql.generator.annotations.GraphQLName
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,6 +45,7 @@ object UnifiedTrackerEdits {
         fun isEmpty() = listOf(status, lastChapterRead, score, startDate, finishDate).all { it == null }
     }
 
+    @GraphQLName("UnifiedTrackEditOutcome")
     enum class Outcome {
         UPDATED,
         SKIPPED,
