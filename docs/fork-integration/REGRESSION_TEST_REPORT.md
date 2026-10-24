@@ -62,8 +62,8 @@ Per-feature statuses are in `FORK_FEATURE_INVENTORY.md`. Counts:
 - Upgrade of *your* real database (intentionally not touched — follow `MIGRATION_AND_ROLLBACK.md`).
 
 ## Known issues
-- The fork's Mihon mapping uses bit `0x100` for "fillermarked = false", which Mihon uses for "sort by chapter
-  number" (pre-existing). The integration only applies it when the WebUI filter is set, but a Mihon backup with that
-  sort order will show up as a fillermark filter in the WebUI.
+- ~~The fork's Mihon mapping uses bit `0x100` for "fillermarked = false", which Mihon uses for "sort by chapter
+  number".~~ Resolved 2026-10-24 with the removal of fillermarks: the bits 0x80/0x100 no longer have a fork meaning in
+  either direction (see KOMIKKU_PORT_MIGRATIONS.md).
 - `zh_Hans.po`, `zh_Hant.po`, `src/i18n/locales.json` in the WebUI are stale, unused files from the fork.
 - STABLE WebUI channel points at upstream revision tags that do not exist in the fork release repo (pre-existing).

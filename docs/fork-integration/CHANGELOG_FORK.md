@@ -62,5 +62,16 @@ Ported from the Komikku fork (details: KOMIKKU_FEATURE_PORTS.md, KOMIKKU_PORT_AU
 - Optional background refresh of opened manga.
 - New chapter filters: bookmark colors, blacklisted chapters, merged duplicates.
 
-Fillermarks are unchanged and remain a separate feature (optional copy into the blacklist). Backups use Komikku's
-proto numbers for the new data (see KOMIKKU_PORT_MIGRATIONS.md).
+Backups use Komikku's proto numbers for the new data (see KOMIKKU_PORT_MIGRATIONS.md).
+
+### Continuation (October 24, 2026)
+
+- **Fillermarks removed**: every fillermark is migrated automatically into a blacklist entry of its user (verified
+  before the old column is dropped); legacy backups restore fillermarks as blacklist entries; the fillermark UI,
+  API and settings are gone. The chapterFlags `0x100` collision with Mihon's sort is resolved.
+- Bookmark color filters in Library and Updates (Edit beside "Bookmarked"); the chapter color filter now refines
+  "Bookmarked" like in Komikku.
+- Per-manga preferred tracker for metadata autofill; global preference in Tracking settings.
+- Hidden categories; per-category automatic update intervals; category refreshes cover subcategories; library
+  refresh scope (whole category / selected subcategory).
+- Tests run on another port with `-PtestServerPort`.

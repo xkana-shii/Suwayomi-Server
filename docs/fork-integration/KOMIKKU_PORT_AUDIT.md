@@ -21,16 +21,36 @@ upstream-20261023 state). Launcher: not needed (no launcher-visible change).
 | 7 | `OpenRefresh` (refresh details/chapters on open, read once per entry) | prefs | WebUI-side: shows cached data, refreshes in the background, deduplicated across remounts |
 | 8 | Chapter filters incl. bookmark colors, blacklist reveal | prefs | WebUI chapter list options (manga meta with global defaults, like the existing filters) |
 
-## Fillermark audit
+## Fillermark audit (revised 2026-10-24)
 
-The Suwayomi fork's fillermark (`CHAPTERUSER.FILLERMARK`, filter bits `0x80/0x100`, proto 15) has the same bits and
-proto number as Komikku's old-fork fillermark, which Komikku converts into exact blacklist keys. In Suwayomi,
-however, fillermarks are **a marker with their own tri-state filter and download/deletion settings**, not a hide
-rule. They are therefore **not equivalent** and were kept as they are:
+The fork's fillermark (`CHAPTERUSER.FILLERMARK`, filter bits `0x80/0x100`, proto 15) has the same bits and proto
+number as Komikku's old-fork fillermark, which Komikku's `OldForkDatabaseConverter` and backup restore turn into
+exact blacklist keys (requirement 4.2 of Komikku's tracker: "No standalone Fillermark UI — superseded, migration
+only"). The first port kept both systems apart; on the user's decision the fillermark is now **replaced by the
+blacklist**, like in Komikku:
 
-- no data is migrated, replaced or removed; proto 15 still restores as fillermarks (Komikku would convert it);
-- the blacklist is a separate feature; an explicit per-manga action "Blacklist fillermarked chapters" copies them
-  into the blacklist on request without touching the fillermarks.
+- every fillermark migrates into a blacklist entry of its user (hybrid key instead of Komikku's `url:` key, so the
+  entry also survives a source URL change without false matches);
+- legacy backups restore proto 15 as blacklist entries; new backups never write it;
+- the fillermark UI, API, settings and the manual conversion button are removed;
+- the `0x80/0x100` chapterFlags collision with Mihon's sort bits is resolved by dropping the fillermark meaning.
+
+Details: KOMIKKU_PORT_MIGRATIONS.md.
+
+## Continuation audit (2026-10-24)
+
+Komikku `main` advanced to `0f1c9998dd` (fix: persist scanlator preference drags immediately). Its intent — every
+priority change is written at once — already holds in the port (each move is its own queued mutation). The
+remaining Komikku features were read from `docs/kns-feature-implementation.md` and the code:
+
+| Komikku item | Komikku behaviour | Port |
+|---|---|---|
+| 2.2-e / batch 11 library color filter | Edit beside the Bookmarked tri-state; colors refine Bookmarked (include) only; a manga passes with an included color and no excluded color | Same rule; colors of visible bookmarked chapters (`MangaType.bookmarkColors`). Komikku counts hidden chapters' colors and lists that as a known gap; the port uses visible chapters |
+| batch 11/12 Updates color filter | Own Updates keys, same tri-state rule per chapter | Same, filtered by the server (`isBookmarked` + `bookmarkColor in/notIn`) |
+| 4.1-f chapter color filter | Refines Bookmarked | Changed from an independent filter to the same refining rule |
+| batch 5 preferred tracker | Per-manga map plus global priority tracker (device-only in Komikku) | Per-manga preference in the user's manga meta (backed up), global preference in global meta |
+| 1.2-k hidden categories | Hidden (or below a hidden ancestor) categories contribute nothing to tabs; "show hidden" setting; membership kept | Same, plus visible subtree counts |
+| 1.5-a/b/d update scope | Interval inherited from the nearest ancestor; category refresh covers the subtree; whole category / selected subcategory scope; manga due through any category, a global one always wins; dedup by manga id | Same on Suwayomi's updater; update inclusion inherits the same way; last runs per category in the database (per user) |
 
 ## Komikku bugs and how the port avoids them
 

@@ -22,8 +22,9 @@ points: `backup/main-pre-komikku-ports-20261024` (Server), `backup/master-pre-ko
 
 - Chapter menu / selection: **Blacklist chapter** / **Remove from blacklist**. New entries use Komikku's hybrid v2
   key (URL + number + scanlator + name); URL, hybrid v1 and legacy keys from Komikku backups are understood.
-- Blacklist tab of the scanlator settings: hide/reveal switch, entries (also those whose chapter disappeared), remove,
-  and "Blacklist fillermarked chapters".
+- Blacklist tab of the scanlator settings: hide/reveal switch, entries (also those whose chapter disappeared) and
+  remove. The blacklist is the only exclusion system: the former fillermarks were migrated into it automatically
+  (see KOMIKKU_PORT_MIGRATIONS.md).
 - "Show blacklisted chapters" filter reveals them in the list (blocked icon, dimmed); unread counts, Updates, reader
   navigation and downloads keep excluding them.
 
@@ -35,7 +36,10 @@ points: `backup/main-pre-komikku-ports-20261024` (Server), `backup/master-pre-ko
   Shift+F10) opens the color menu with a check on the current color. Used in the chapter menu, selection actions
   and the reader bookmark button.
 - Colors are shown in the chapter list, reader controls, reader chapter list, Updates and History.
-- Chapter filters: **Bookmark colors** with an Edit dialog of tri-state checkboxes (include / exclude / ignore).
+- Chapter, Library and Updates filters: **Bookmarked** tri-state with an **Edit** action for colors (include /
+  exclude / ignore per color). Colors refine "Bookmarked = include" only (Komikku). Library: a manga passes with an
+  included color and no excluded color among its visible bookmarks. Updates: filtered by the server per chapter,
+  so paging, date groups and the compact manga grouping stay intact.
 - Existing bookmarks have color 0 (default). Re-uploaded chapters keep the bookmark color with the bookmark.
 
 ## 4. Smart Categories
@@ -56,11 +60,19 @@ points: `backup/main-pre-komikku-ports-20261024` (Server), `backup/master-pre-ko
 - Set categories: depth-first indented tree (bulk tri-state assignment unchanged).
 - Library: tabs are top-level categories showing their whole subtree once (`subtreeMangaCount`), subcategory chips
   narrow a tab to a branch. Existing flat categories are top level; nothing is reinterpreted by name.
+- **Hidden categories** (category settings eye button, chip "Hidden"): kept with manga, hierarchy, bindings and
+  settings; hidden categories and everything below them are left out of tabs, chips, tab counts and tab contents
+  unless Library settings → "Show hidden categories" is on. Set categories still lists them (marked).
+- **Update scopes**: refreshing a category covers its subtree; the library refresh button uses the whole tab or the
+  selected subcategory chip (Library settings). Automatic updates: a category's update inclusion and interval in days
+  (edit dialog) are inherited from the nearest ancestor; a manga is due when it has no category, a category without
+  interval, or a due interval category; each manga is queued once.
 
 ## 6. Tracker metadata autofill and editing
 
 - Metadata editor: **Autofill from tracker** for MyAnimeList, AniList, MangaUpdates and MangaBaka bindings (fork
-  metadata providers, by the binding's remote id). Preferred tracker setting or a choice when several are bound;
+  metadata providers, by the binding's remote id). Tracker choice: the manga's preferred tracker (tracking dialog,
+  "Follow global" or a tracker), else the global one (Tracking settings), else a choice when several are bound;
   fills the fields for review only (saved as the usual local overrides when the user saves); tags are trimmed,
   de-duplicated and merged after the existing ones.
 - Tracking dialog: **Edit all trackers** (status, chapter, score 0–10 → each tracker's nearest score, dates) with
@@ -76,14 +88,13 @@ points: `backup/main-pre-komikku-ports-20261024` (Server), `backup/master-pre-ko
 
 ## 8. Advanced chapter filters
 
-Read/unread, downloaded, bookmarked, fillermarked (existing) plus bookmark colors (tri-state), show blacklisted, show
+Read/unread, downloaded, bookmarked with bookmark colors (tri-state, refining bookmarked), show blacklisted, show
 merged duplicates and the scanlator settings. They compose with AND, persist per manga with the existing global
 defaults mechanism, and work on desktop and mobile.
 
 ## Not ported / differences
 
-- Library-wide and Updates-wide bookmark color filters (Komikku has them) — only the chapter list filter.
-- Komikku's per-manga preferred tracker map — a global preferred tracker instead.
-- Komikku's hidden categories (KMK `hidden`) and subcategory update scopes — update/download inclusion stays per
-  category as before.
 - Komikku's per-manga/tracker last-failure map for unified edits — results are returned per request instead.
+- Komikku's bulk hide/show and category search in the manager — hiding is per category.
+- Last scheduled update per category is recorded when the scheduled update is queued (Komikku: when it completes).
+- Download inclusion (`includeInDownload`) is not inherited; update inclusion is.

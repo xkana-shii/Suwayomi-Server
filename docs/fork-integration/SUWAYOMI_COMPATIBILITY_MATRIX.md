@@ -49,5 +49,5 @@ Status 2026-10-24: the integration heads were pushed to `origin/master` and the 
 | Server updates point to fork releases | `AppUpdate.kt` |
 | Launcher downloads/updates the fork server jar | `ServerUpdater.kt` (`xkana-shii/Suwayomi-Server[-preview]` latest release) |
 | Windows bundle downloads the fork launcher | `scripts/bundler.sh`, `scripts/resources/Suwayomi Launcher.bat` |
-| Fork GraphQL API used by the WebUI | fillermarks, metadata editing/providers, cover upload, shutdown, clearDatabase, nonLibraryCount, installMissingExtensionsFromBackup |
+| Fork GraphQL API used by the WebUI | Komikku ports (scanlator settings, blacklist, bookmark colors, category hierarchy, Smart Categories, tracker autofill/unified edits; fillermarks removed 2026-10-24 — a WebUI older than the Komikku-port branch cannot load manga pages on this server), metadata editing/providers, cover upload, shutdown, clearDatabase, nonLibraryCount, installMissingExtensionsFromBackup |
 | Shared setting | `serverUpdateChannel` (server config, edited by the launcher) |

@@ -88,3 +88,10 @@ Do **not** start the old server on the upgraded database: it is not downgrade co
 - Old fork `server.conf` with non-default values: values preserved (including fork `maxPagesInParallel`).
 - Old fork backup file restored into the upgraded server.
 - Your real data in `D:\Suwayomi\Suwayomi Data` and `%LOCALAPPDATA%\Tachidesk` was not opened or modified.
+
+## Komikku ports and fillermark removal (October 2026)
+
+Starting the Komikku-port server migrates every fillermark into the chapter blacklist and then removes the
+fillermark column and settings (KOMIKKU_PORT_MIGRATIONS.md). This is one-way: take a backup (database copy and a
+Suwayomi backup) before the first start. A server and WebUI from before the port do not understand the new data;
+roll back by restoring the database copy, not by starting an older server on the migrated database.
