@@ -24,6 +24,8 @@ import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.global.impl.sync.SyncYomiSyncService
+import suwayomi.tachidesk.manga.impl.category.CategoryTree
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
 import suwayomi.tachidesk.manga.model.dataclass.CategoryDataClass
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryMetaTable
@@ -47,7 +49,8 @@ object Category {
         names: List<String>,
     ): List<Int> =
         transaction {
-            val categoryIdToName = getCategoryList(userId).associate { it.id to it.name.lowercase() }
+            // fork: names only have to be unique among siblings, these are created at the top level
+            val categoryIdToName = getCategoryList(userId).filter { it.parentId == null }.associate { it.id to it.name.lowercase() }
 
             val categoriesToCreate =
                 names
@@ -173,12 +176,103 @@ object Category {
                     .where { CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }
                     .firstOrNull()
                     ?.get(CategoryTable.uid)
+            reparentChildrenOf(userId, categoryId)
             CategoryTable.deleteWhere { CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }
             normalizeCategories(userId)
             if (uid != null) {
                 SyncYomiSyncService.rememberDeletedCategory(userId, uid)
             }
         }
+    }
+
+    // fork (Komikku port): nested categories and Smart Category tracker status bindings
+
+    fun getCategoryTree(userId: Int): CategoryTree =
+        transaction {
+            CategoryTree(
+                CategoryTable
+                    .select(CategoryTable.id, CategoryTable.parentId)
+                    .where { CategoryTable.user eq userId }
+                    .associate { it[CategoryTable.id].value to it[CategoryTable.parentId] },
+            )
+        }
+
+    /** The children of a deleted category move up to its parent, so no branch disappears with it. */
+    fun reparentChildrenOf(
+        userId: Int,
+        categoryId: Int,
+    ) {
+        transaction {
+            val parentId =
+                CategoryTable
+                    .select(CategoryTable.parentId)
+                    .where { CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }
+                    .firstOrNull()
+                    ?.get(CategoryTable.parentId)
+            CategoryTable.update({ CategoryTable.parentId eq categoryId and (CategoryTable.user eq userId) }) {
+                it[CategoryTable.parentId] = parentId
+            }
+        }
+    }
+
+    /**
+     * Validates that [categoryId] (null = a new category) named [name] can live below [parentId] (null = top level):
+     * the parent belongs to the user and is not the default category, no cycle is created and no sibling has the
+     * same name.
+     */
+    fun requireValidPlacement(
+        userId: Int,
+        categoryId: Int?,
+        name: String,
+        parentId: Int?,
+    ) {
+        transaction {
+            val defaultCategoryId = getDefaultCategoryId(userId)
+            if (parentId != null) {
+                require(parentId != defaultCategoryId) { "The default category cannot have subcategories" }
+                require(categoryId != defaultCategoryId) { "The default category cannot be a subcategory" }
+                require(
+                    CategoryTable.select(CategoryTable.id).where { CategoryTable.id eq parentId and (CategoryTable.user eq userId) }.any(),
+                ) { "Parent category $parentId not found" }
+                if (categoryId != null) {
+                    require(getCategoryTree(userId).canMove(categoryId, parentId)) { "A category cannot be moved into its own subtree" }
+                }
+            }
+            val siblingNames =
+                CategoryTable
+                    .select(CategoryTable.id, CategoryTable.name)
+                    .where {
+                        (CategoryTable.user eq userId) and
+                            (if (parentId == null) CategoryTable.parentId.isNull() else CategoryTable.parentId eq parentId)
+                    }.filter { it[CategoryTable.id].value != categoryId }
+                    .map { it[CategoryTable.name] }
+            require(siblingNames.none { it.equals(name, ignoreCase = true) }) { "'name' must be unique among its sibling categories" }
+        }
+    }
+
+    fun setParent(
+        userId: Int,
+        categoryIds: List<Int>,
+        parentId: Int?,
+    ) {
+        transaction {
+            categoryIds.forEach { categoryId ->
+                val name =
+                    CategoryTable
+                        .select(CategoryTable.name)
+                        .where { CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }
+                        .firstOrNull()
+                        ?.get(CategoryTable.name) ?: return@forEach
+                requireValidPlacement(userId, categoryId, name, parentId)
+                CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
+                    it[CategoryTable.parentId] = parentId
+                }
+            }
+        }
+    }
+
+    fun requireValidTrackStatus(trackStatus: Int?) {
+        require(trackStatus == null || UnifiedTrackStatus.fromValue(trackStatus) != null) { "Unknown tracker status $trackStatus" }
     }
 
     /** make sure category order numbers starts from 1 and is consecutive */

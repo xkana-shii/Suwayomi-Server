@@ -26,6 +26,8 @@ import suwayomi.tachidesk.graphql.types.CategoryNodeList.Companion.toNodeList
 import suwayomi.tachidesk.graphql.types.CategoryType
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
+import suwayomi.tachidesk.manga.model.table.MangaUserTable
+import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.server.JavalinSetup
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.user.requireUser
@@ -103,6 +105,43 @@ class CategoryCountForMangaDataLoader : KotlinDataLoader<Int, Int> {
                             }.groupBy(CategoryMangaTable.manga)
                             .associate { it[CategoryMangaTable.manga].value to it[count].toInt() }
                     ids.map { countByMangaId[it] ?: 0 }
+                }
+            }
+        }
+}
+
+/** fork (Komikku port): library manga of a category's whole subtree, each manga counted once */
+class SubtreeMangaCountForCategoryDataLoader : KotlinDataLoader<Int, Int> {
+    override val dataLoaderName = "SubtreeMangaCountForCategoryDataLoader"
+
+    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, Int> =
+        DataLoaderFactory.newDataLoader { ids ->
+            future {
+                val userId = graphQLContext.getAttribute(JavalinSetup.Attribute.TachideskUser).requireUser()
+                val defaultCategoryId = Category.getDefaultCategoryId(userId)
+                val tree = Category.getCategoryTree(userId)
+                val subtrees = ids.associateWith { id -> setOf(id) + tree.descendants(id) }
+                val allCategoryIds = subtrees.values.flatten().filter { it != defaultCategoryId }.toSet()
+                val mangaByCategory =
+                    transaction {
+                        CategoryMangaTable
+                            .innerJoin(
+                                MangaUserTable,
+                                onColumn = { CategoryMangaTable.manga },
+                                otherColumn = { MangaUserTable.manga },
+                                additionalConstraint = { MangaUserTable.user eq userId },
+                            ).select(CategoryMangaTable.category, CategoryMangaTable.manga)
+                            .where {
+                                (CategoryMangaTable.category inIds allCategoryIds) and (CategoryMangaTable.user eq userId) and
+                                    (MangaUserTable.inLibrary eq true)
+                            }.groupBy({ it[CategoryMangaTable.category].value }, { it[CategoryMangaTable.manga].value })
+                    }
+                ids.map { id ->
+                    if (id == defaultCategoryId) {
+                        Category.getCategorySize(userId, id)
+                    } else {
+                        subtrees.getValue(id).flatMapTo(HashSet()) { mangaByCategory[it].orEmpty() }.size
+                    }
                 }
             }
         }

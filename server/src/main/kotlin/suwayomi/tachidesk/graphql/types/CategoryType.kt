@@ -7,6 +7,7 @@
 
 package suwayomi.tachidesk.graphql.types
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -30,6 +31,11 @@ class CategoryType(
     val includeInUpdate: IncludeOrExclude,
     val includeInDownload: IncludeOrExclude,
     val isDefaultCategory: Boolean,
+    // fork (Komikku port)
+    @GraphQLDescription("The parent category; null for top level categories")
+    val parentId: Int? = null,
+    @GraphQLDescription("Smart Category binding: the unified tracker status (see UnifiedTrackStatus) this category follows")
+    val trackStatus: Int? = null,
 ) : Node {
     constructor(row: ResultRow) : this(
         row[CategoryTable.id].value,
@@ -39,6 +45,8 @@ class CategoryType(
         IncludeOrExclude.fromValue(row[CategoryTable.includeInUpdate]),
         IncludeOrExclude.fromValue(row[CategoryTable.includeInDownload]),
         row[CategoryTable.isDefaultCategory],
+        row[CategoryTable.parentId],
+        row[CategoryTable.trackStatus],
     )
 
     constructor(dataClass: CategoryDataClass) : this(
@@ -49,12 +57,18 @@ class CategoryType(
         dataClass.includeInUpdate,
         dataClass.includeInDownload,
         dataClass.isDefaultCategory,
+        dataClass.parentId,
+        dataClass.trackStatus,
     )
 
     fun mangas(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaNodeList> =
         dataFetchingEnvironment.getNodeListFromDataLoaders("MangaForCategoryDataLoader", "MangaCountForCategoryDataLoader", id) {
             emptyList<MangaType>().toNodeList().copy(totalCount = it)
         }
+
+    @GraphQLDescription("fork: library manga in this category or any of its subcategories, each counted once")
+    fun subtreeMangaCount(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Int> =
+        dataFetchingEnvironment.getValueFromDataLoader("SubtreeMangaCountForCategoryDataLoader", id)
 
     fun meta(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<List<CategoryMetaType>> =
         dataFetchingEnvironment.getValueFromDataLoader<Int, List<CategoryMetaType>>("CategoryMetaDataLoader", id)

@@ -2,6 +2,8 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
+import suwayomi.tachidesk.manga.impl.category.SmartCategories
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import org.jetbrains.exposed.v1.core.LikePattern
 import org.jetbrains.exposed.v1.core.Op
@@ -16,6 +18,7 @@ import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insertAndGetId
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
@@ -257,6 +260,14 @@ class CategoryMutation {
         val default: Boolean? = null,
         val includeInUpdate: IncludeOrExclude? = null,
         val includeInDownload: IncludeOrExclude? = null,
+        @GraphQLDescription("fork: move below this category")
+        val parentId: Int? = null,
+        @GraphQLDescription("fork: move to the top level")
+        val moveToTopLevel: Boolean? = null,
+        @GraphQLDescription("fork: Smart Category binding (unified tracker status)")
+        val trackStatus: Int? = null,
+        @GraphQLDescription("fork: remove the Smart Category binding")
+        val clearTrackStatus: Boolean? = null,
     )
 
     data class UpdateCategoryPayload(
@@ -287,7 +298,28 @@ class CategoryMutation {
         ids: List<Int>,
         patch: UpdateCategoryPatch,
     ) {
+        Category.requireValidTrackStatus(patch.trackStatus)
+        if (patch.name != null) {
+            // fork: names are unique among siblings
+            transaction {
+                CategoryTable
+                    .select(CategoryTable.id, CategoryTable.parentId)
+                    .where { CategoryTable.id inList ids and (CategoryTable.user eq userId) and (CategoryTable.isDefaultCategory eq false) }
+                    .forEach { Category.requireValidPlacement(userId, it[CategoryTable.id].value, patch.name, it[CategoryTable.parentId]) }
+            }
+        }
+        if (patch.parentId != null || patch.moveToTopLevel == true) {
+            Category.setParent(userId, ids, if (patch.moveToTopLevel == true) null else patch.parentId)
+        }
+        val trackStatusChanged = patch.trackStatus != null || patch.clearTrackStatus == true
         transaction {
+            if (trackStatusChanged) {
+                CategoryTable.update({
+                    CategoryTable.id inList ids and (CategoryTable.user eq userId) and (CategoryTable.isDefaultCategory eq false)
+                }) { update ->
+                    update[trackStatus] = if (patch.clearTrackStatus == true) null else patch.trackStatus
+                }
+            }
             // The default category row is protected from rename and landing-flag changes;
             if (patch.name != null) {
                 CategoryTable.update({
@@ -322,6 +354,7 @@ class CategoryMutation {
                 }
             }
         }
+        if (trackStatusChanged) SmartCategories.syncUser(userId)
     }
 
     @RequireAuth
@@ -421,6 +454,10 @@ class CategoryMutation {
         val default: Boolean? = null,
         val includeInUpdate: IncludeOrExclude? = null,
         val includeInDownload: IncludeOrExclude? = null,
+        @GraphQLDescription("fork: create as a subcategory of this category")
+        val parentId: Int? = null,
+        @GraphQLDescription("fork: Smart Category binding (unified tracker status)")
+        val trackStatus: Int? = null,
     )
 
     data class CreateCategoryPayload(
@@ -435,11 +472,9 @@ class CategoryMutation {
         input: CreateCategoryInput,
     ): CreateCategoryPayload? {
         val (clientMutationId, name, order, default, includeInUpdate, includeInDownload) = input
-        transaction {
-            require(CategoryTable.selectAll().where { CategoryTable.name eq input.name and (CategoryTable.user eq userId) }.isEmpty()) {
-                "'name' must be unique"
-            }
-        }
+        // fork: names only have to be unique among siblings (nested categories)
+        Category.requireValidPlacement(userId, null, input.name, input.parentId)
+        Category.requireValidTrackStatus(input.trackStatus)
         require(!name.equals(Category.DEFAULT_CATEGORY_NAME, ignoreCase = true)) {
             "'name' must not be ${Category.DEFAULT_CATEGORY_NAME}"
         }
@@ -471,12 +506,15 @@ class CategoryMutation {
                         if (includeInDownload != null) {
                             it[CategoryTable.includeInDownload] = includeInDownload.value
                         }
+                        it[CategoryTable.parentId] = input.parentId
+                        it[CategoryTable.trackStatus] = input.trackStatus
                     }
 
                 Category.normalizeCategories(userId)
 
                 CategoryType(CategoryTable.selectAll().where { CategoryTable.id eq id and (CategoryTable.user eq userId) }.first())
             }
+        if (input.trackStatus != null) SmartCategories.syncUser(userId)
 
         return CreateCategoryPayload(clientMutationId, category)
     }
@@ -531,6 +569,7 @@ class CategoryMutation {
                             .map { MangaType(it) }
                     }
 
+                Category.reparentChildrenOf(userId, categoryId)
                 CategoryTable.deleteWhere { CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }
 
                 Category.normalizeCategories(userId)

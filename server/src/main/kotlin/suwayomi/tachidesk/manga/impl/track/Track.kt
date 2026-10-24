@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.track
 
+import suwayomi.tachidesk.manga.impl.category.SmartCategories
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -321,6 +322,7 @@ object Track {
         transaction {
             TrackRecordTable.deleteWhere { TrackRecordTable.id eq recordId and (TrackRecordTable.user eq userId) }
         }
+        SmartCategories.syncManga(userId, listOf(recordDb[TrackRecordTable.mangaId].value))
     }
 
     suspend fun update(
@@ -542,7 +544,7 @@ object Track {
             }
 
             tracks.map { it.id!! }
-        }
+        }.also { SmartCategories.syncManga(userId, tracks.map { it.manga_id }) }
 
     fun insertTrackRecord(
         userId: Int,
@@ -571,7 +573,7 @@ object Track {
                     this[private] = it.private
                     this[user] = userId
                 }.map { it[TrackRecordTable.id].value }
-        }
+        }.also { SmartCategories.syncManga(userId, tracks.map { it.manga_id }) }
 
     @Serializable
     data class LoginInput(
