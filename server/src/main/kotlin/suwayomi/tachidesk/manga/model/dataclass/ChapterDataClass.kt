@@ -29,8 +29,6 @@ data class ChapterDataClass(
     @Deprecated("")
     val bookmarked: Boolean = false,
     @Deprecated("")
-    val fillermarked: Boolean = false,
-    @Deprecated("")
     val lastPageRead: Int = 0,
     @Deprecated("")
     val lastReadAt: Long = 0,
@@ -73,7 +71,6 @@ data class ChapterDataClass(
                 mangaId = mangaId,
                 read = false,
                 bookmarked = false,
-                fillermarked = false,
                 lastPageRead = 0,
                 lastReadAt = 0,
                 downloaded = false,

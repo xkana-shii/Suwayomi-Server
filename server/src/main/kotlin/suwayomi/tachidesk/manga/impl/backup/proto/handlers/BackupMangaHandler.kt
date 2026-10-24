@@ -42,9 +42,11 @@ import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupHistory
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupManga
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupTracking
 import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
+import suwayomi.tachidesk.manga.impl.chapter.ChapterBlacklist
 import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
 import suwayomi.tachidesk.manga.impl.chapter.SmartMergeOverrideChange
+import suwayomi.tachidesk.manga.impl.chapter.VisibilityChapter
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrack
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrackRecordDataClass
@@ -83,8 +85,10 @@ object BackupMangaHandler {
     private const val CHAPTER_FLAGS_UNREAD_MASK = 0x00000006L
     private const val CHAPTER_FLAGS_DOWNLOADED_MASK = 0x00000018L
     private const val CHAPTER_FLAGS_BOOKMARKED_MASK = 0x00000060L
-    private const val CHAPTER_FLAGS_FILLERMARKED_MASK = 0x00000180L
     private const val META_EXCLUDED_SCANLATORS = "webUI_excludedScanlators"
+
+    // "webUI_fillermarked" is the filter of the removed fillermark feature: never exported. Its old mapping to the
+    // flag bits 0x80/0x100 is gone, 0x100 is Mihon's "sort by chapter number" and passes through untouched.
     private val chapterFilterMetaKeys = listOf("webUI_unread", "webUI_bookmarked", "webUI_downloaded", "webUI_fillermarked")
 
     /** @return the flags derived from the meta and the mask of the flag bits the meta defined */
@@ -109,12 +113,6 @@ object BackupMangaHandler {
             "false" -> flags = flags or 0x00000040L
         }
         if (meta["webUI_bookmarked"] != null) mask = mask or CHAPTER_FLAGS_BOOKMARKED_MASK
-        // FILLERMARKED
-        when (meta["webUI_fillermarked"]) {
-            "true" -> flags = flags or 0x00000080L
-            "false" -> flags = flags or 0x00000100L
-        }
-        if (meta["webUI_fillermarked"] != null) mask = mask or CHAPTER_FLAGS_FILLERMARKED_MASK
         return flags to mask
     }
 
@@ -134,11 +132,6 @@ object BackupMangaHandler {
         when (chapterFlags and CHAPTER_FLAGS_BOOKMARKED_MASK) {
             0x00000020L -> meta["webUI_bookmarked"] = "true"
             0x00000040L -> meta["webUI_bookmarked"] = "false"
-        }
-        // FILLERMARKED
-        when (chapterFlags and CHAPTER_FLAGS_FILLERMARKED_MASK) {
-            0x00000080L -> meta["webUI_fillermarked"] = "true"
-            0x00000100L -> meta["webUI_fillermarked"] = "false"
         }
         return meta
     }
@@ -369,7 +362,6 @@ object BackupMangaHandler {
                                 scanlator = it[ChapterTable.scanlator],
                                 read = it.getOrNull(ChapterUserTable.isRead) ?: false,
                                 bookmark = it.getOrNull(ChapterUserTable.isBookmarked) ?: false,
-                                fillermark = it.getOrNull(ChapterUserTable.isFillermarked) ?: false,
                                 bookmarkColor = it.getOrNull(ChapterUserTable.bookmarkColor) ?: BookmarkColor.DEFAULT,
                                 lastPageRead = it.getOrNull(ChapterUserTable.lastPageRead) ?: 0,
                                 dateFetch = it[ChapterTable.fetchedAt].seconds.inWholeMilliseconds,
@@ -604,9 +596,9 @@ object BackupMangaHandler {
     }
 
     /**
-     * fork (Komikku port): restores the scanlator rules when the backup states them. Fillermarks (proto 15) stay
-     * fillermarks: unlike Komikku, this fork keeps them as their own feature, so they are not turned into blacklist
-     * entries.
+     * fork (Komikku port): restores the scanlator rules when the backup states them. Fillermarks of older backups
+     * (proto 15, the removed fillermark feature) become chapter blacklist entries of the restoring user, like Komikku
+     * converts them; they are added to the stated or the local blacklist, never replace it.
      */
     private fun restoreScanlatorSettings(
         userId: Int,
@@ -623,15 +615,48 @@ object BackupMangaHandler {
                 "global" -> SmartMergeOverrideChange(null)
                 else -> null
             }
+        val legacyFillermarkKeys = legacyFillermarkBlacklistKeys(manga.chapters)
+        val blacklist =
+            when {
+                listsPresent -> {
+                    (manga.blacklistedChapters + legacyFillermarkKeys).distinct()
+                }
+
+                legacyFillermarkKeys.isNotEmpty() -> {
+                    (ScanlatorSettings.get(userId, mangaId).blacklistedChapters + legacyFillermarkKeys).distinct()
+                }
+
+                else -> {
+                    null
+                }
+            }
         ScanlatorSettings.update(
             userId,
             mangaId,
-            blacklistedChapters = manga.blacklistedChapters.takeIf { listsPresent },
+            blacklistedChapters = blacklist,
             scanlatorPriority = manga.scanlatorPriority.takeIf { listsPresent },
             scanlatorRangeRules = manga.scanlatorRangeRules.takeIf { listsPresent },
             smartMergeOverride = override,
         )
     }
+
+    /** hybrid keys (URL first, then number, scanlator and name) of the fillermarked chapters of a legacy backup */
+    fun legacyFillermarkBlacklistKeys(chapters: List<BackupChapter>): List<String> =
+        chapters
+            .filter { it.fillermark }
+            .distinctBy { it.url }
+            .map { chapter ->
+                ChapterBlacklist.hybridKey(
+                    VisibilityChapter(
+                        id = 0,
+                        url = chapter.url,
+                        name = chapter.name,
+                        chapterNumber = chapter.chapterNumber.toString().toDouble(),
+                        scanlator = chapter.scanlator?.ifBlank { null }?.trim(),
+                        sourceOrder = 0,
+                    ),
+                )
+            }
 
     private fun restoredBookmarkColor(
         backupChapter: BackupChapter,
@@ -727,7 +752,6 @@ object BackupMangaHandler {
                     this[ChapterUserTable.lastPageRead] = chapter.lastPageRead.coerceAtLeast(0)
                     this[ChapterUserTable.isBookmarked] = chapter.bookmark
                     this[ChapterUserTable.bookmarkColor] = restoredBookmarkColor(chapter, chapter.bookmark, null)
-                    this[ChapterUserTable.isFillermarked] = chapter.fillermark
 
                     this[ChapterUserTable.version] = chapter.version
                     this[ChapterUserTable.lastModifiedAt] = chapter.lastModifiedAt
@@ -767,7 +791,6 @@ object BackupMangaHandler {
                             } else {
                                 BookmarkColor.DEFAULT
                             }
-                        this[ChapterUserTable.isFillermarked] = backupChapter.fillermark
                     } else {
                         val bookmarked = backupChapter.bookmark || (userData?.get(ChapterUserTable.isBookmarked) ?: false)
                         this[ChapterUserTable.bookmarkColor] = restoredBookmarkColor(backupChapter, bookmarked, localColor)
@@ -778,8 +801,6 @@ object BackupMangaHandler {
                                 .coerceAtLeast(0)
                         this[ChapterUserTable.isBookmarked] =
                             backupChapter.bookmark || (userData?.get(ChapterUserTable.isBookmarked) ?: false)
-                        this[ChapterUserTable.isFillermarked] =
-                            backupChapter.fillermark || (userData?.get(ChapterUserTable.isFillermarked) ?: false)
                     }
                 }
 

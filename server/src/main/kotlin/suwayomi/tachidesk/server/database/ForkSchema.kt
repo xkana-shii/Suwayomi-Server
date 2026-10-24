@@ -10,6 +10,9 @@ package suwayomi.tachidesk.server.database
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.manga.impl.chapter.ChapterBlacklist
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
+import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
 import suwayomi.tachidesk.server.database.migration.helpers.UNLIMITED_TEXT
 import suwayomi.tachidesk.server.database.migration.helpers.toSqlName
 
@@ -29,9 +32,13 @@ object ForkSchema {
 
     fun ensure() {
         transaction {
-            ensureChapterUserFillermark()
             ensureKomikkuPortColumns()
+            ensureChapterUserFillermark()
         }
+        // separate transactions: the blacklist entries are committed before the fillermark data is removed, so an
+        // interrupted start resumes where it stopped
+        transaction { migrateFillermarksToBlacklist() }
+        transaction { removeMigratedFillermarks() }
     }
 
     /**
@@ -72,13 +79,14 @@ object ForkSchema {
         val chapterUserTable = "CHAPTERUSER".toSqlName()
         val chapterTable = "CHAPTER".toSqlName()
 
+        if (!columnExists("CHAPTER", "FILLERMARK")) {
+            return
+        }
+
+        // staging column of the fillermark → blacklist migration below
         if (!columnExists("CHAPTERUSER", "FILLERMARK")) {
             logger.info { "ForkSchema: adding $chapterUserTable.FILLERMARK" }
             exec("ALTER TABLE $chapterUserTable ADD COLUMN IF NOT EXISTS FILLERMARK BOOLEAN DEFAULT FALSE NOT NULL")
-        }
-
-        if (!columnExists("CHAPTER", "FILLERMARK")) {
-            return
         }
 
         logger.info { "ForkSchema: moving legacy $chapterTable.FILLERMARK values to $chapterUserTable" }
@@ -105,6 +113,93 @@ object ForkSchema {
             """.trimIndent(),
         )
         exec("ALTER TABLE $chapterTable DROP COLUMN IF EXISTS FILLERMARK")
+    }
+
+    private data class Fillermark(
+        val userId: Int,
+        val mangaId: Int,
+        val chapterId: Int,
+    )
+
+    private fun fillermarks(): List<Fillermark> {
+        val chapterUserTable = "CHAPTERUSER".toSqlName()
+        val chapterTable = "CHAPTER".toSqlName()
+        return TransactionManager
+            .current()
+            .exec(
+                """
+                SELECT cu.USER_ID, c.MANGA, c.ID
+                FROM $chapterUserTable cu JOIN $chapterTable c ON c.ID = cu.CHAPTER
+                WHERE cu.FILLERMARK = TRUE
+                """.trimIndent(),
+            ) { rs ->
+                buildList { while (rs.next()) add(Fillermark(rs.getInt(1), rs.getInt(2), rs.getInt(3))) }
+            }.orEmpty()
+    }
+
+    /**
+     * The fillermark feature was replaced by the chapter blacklist (Komikku port). Every fillermarked chapter becomes a
+     * blacklist entry of the user that fillermarked it: a hybrid key (URL first, then number, scanlator and name), so
+     * the entry follows the chapter through URL changes without ever matching another chapter. Entries are added to
+     * the user's existing blacklist, chapters that already are blacklisted get no second entry. Idempotent.
+     */
+    private fun migrateFillermarksToBlacklist() {
+        if (!columnExists("CHAPTERUSER", "FILLERMARK")) return
+        val fillermarks = fillermarks()
+        if (fillermarks.isEmpty()) return
+
+        logger.info { "ForkSchema: moving ${fillermarks.size} fillermarks to the chapter blacklist" }
+        val chaptersByManga = ChapterVisibilityService.loadChapters(fillermarks.map { it.mangaId }.toSet())
+        fillermarks.groupBy { it.userId to it.mangaId }.forEach { (key, marks) ->
+            val (userId, mangaId) = key
+            val chapters = chaptersByManga[mangaId].orEmpty()
+            val stored = ScanlatorSettings.get(userId, mangaId).blacklistedChapters
+            val alreadyBlacklisted = ChapterBlacklist.blacklistedIds(chapters, stored)
+            val markedIds = marks.mapTo(HashSet()) { it.chapterId }
+            val newKeys =
+                chapters
+                    .filter { it.id in markedIds && it.id !in alreadyBlacklisted }
+                    .map(ChapterBlacklist::hybridKey)
+            if (newKeys.isNotEmpty()) {
+                ScanlatorSettings.update(userId, mangaId, blacklistedChapters = stored + newKeys)
+            }
+        }
+        // the derived flag, so counts are right before the first recomputation
+        exec("UPDATE ${"CHAPTERUSER".toSqlName()} SET BLACKLISTED = TRUE, MERGE_HIDDEN = FALSE WHERE FILLERMARK = TRUE")
+    }
+
+    /**
+     * Removes the fillermark column and the settings of the removed feature, but only after every fillermarked
+     * chapter is verified to resolve to a blacklist entry of its user; otherwise everything is kept and the
+     * migration is retried on the next start.
+     */
+    private fun removeMigratedFillermarks() {
+        if (!columnExists("CHAPTERUSER", "FILLERMARK")) return
+        val fillermarks = fillermarks()
+        val chaptersByManga = ChapterVisibilityService.loadChapters(fillermarks.map { it.mangaId }.toSet())
+        val unresolved =
+            fillermarks.groupBy { it.userId to it.mangaId }.flatMap { (key, marks) ->
+                val (userId, mangaId) = key
+                val blacklisted =
+                    ChapterBlacklist.blacklistedIds(
+                        chaptersByManga[mangaId].orEmpty(),
+                        ScanlatorSettings.get(userId, mangaId).blacklistedChapters,
+                    )
+                marks.filter { it.chapterId !in blacklisted }
+            }
+        if (unresolved.isNotEmpty()) {
+            logger.warn { "ForkSchema: ${unresolved.size} fillermarks are not in the blacklist yet, keeping CHAPTERUSER.FILLERMARK" }
+            return
+        }
+
+        logger.info { "ForkSchema: fillermarks migrated, removing CHAPTERUSER.FILLERMARK and the fillermark settings" }
+        exec("DELETE FROM ${"MANGAMETA".toSqlName()} WHERE META_KEY = 'webUI_fillermarked'")
+        exec(
+            "DELETE FROM ${"GLOBALMETA".toSqlName()} WHERE META_KEY IN " +
+                "('webUI_fillermarked', 'webUI_hasFillermarkedChapters', 'webUI_deleteChaptersWithFillermark')",
+        )
+        exec("DELETE FROM ${"CATEGORYMETA".toSqlName()} WHERE META_KEY = 'webUI_hasFillermarkedChapters'")
+        exec("ALTER TABLE ${"CHAPTERUSER".toSqlName()} DROP COLUMN IF EXISTS FILLERMARK")
     }
 
     private fun exec(sql: String) {

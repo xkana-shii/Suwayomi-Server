@@ -131,7 +131,6 @@ class ChapterQuery {
         val mangaId: Int? = null,
         val isRead: Boolean? = null,
         val isBookmarked: Boolean? = null,
-        val isFillermarked: Boolean? = null,
         val lastPageRead: Int? = null,
         val lastReadAt: Long? = null,
         val sourceOrder: Int? = null,
@@ -154,7 +153,6 @@ class ChapterQuery {
             opAnd.eq(mangaId, ChapterTable.manga)
             opAnd.eq(isRead, coalesceDefault(ChapterUserTable.isRead, false))
             opAnd.eq(isBookmarked, coalesceDefault(ChapterUserTable.isBookmarked, false))
-            opAnd.eq(isFillermarked, coalesceDefault(ChapterUserTable.isFillermarked, false))
             opAnd.eq(lastPageRead, coalesceDefault(ChapterUserTable.lastPageRead, 0))
             opAnd.eq(lastReadAt, coalesceDefault(ChapterUserTable.lastReadAt, 0L))
             opAnd.eq(sourceOrder, ChapterTable.sourceOrder)
@@ -180,7 +178,6 @@ class ChapterQuery {
         val mangaId: IntFilter? = null,
         val isRead: BooleanFilter? = null,
         val isBookmarked: BooleanFilter? = null,
-        val isFillermarked: BooleanFilter? = null,
         val lastPageRead: IntFilter? = null,
         val lastReadAt: LongFilter? = null,
         val sourceOrder: IntFilter? = null,
@@ -210,7 +207,6 @@ class ChapterQuery {
                 andFilterWithCompareEntity(ChapterTable.manga, mangaId),
                 andFilterWithCompare(coalesceDefault(ChapterUserTable.isRead, false), isRead),
                 andFilterWithCompare(coalesceDefault(ChapterUserTable.isBookmarked, false), isBookmarked),
-                andFilterWithCompare(coalesceDefault(ChapterUserTable.isFillermarked, false), isFillermarked),
                 andFilterWithCompare(coalesceDefault(ChapterUserTable.lastPageRead, 0), lastPageRead),
                 andFilterWithCompare(coalesceDefault(ChapterUserTable.lastReadAt, 0L), lastReadAt),
                 andFilterWithCompare(ChapterTable.sourceOrder, sourceOrder),

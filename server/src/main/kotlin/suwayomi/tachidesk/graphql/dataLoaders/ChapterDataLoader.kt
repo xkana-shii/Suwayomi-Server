@@ -111,7 +111,6 @@ data class MangaChapterStats(
     val unreadCount: Int,
     val downloadCount: Int,
     val bookmarkCount: Int,
-    val fillermarkCount: Int = 0,
 )
 
 class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterStats> {
@@ -144,12 +143,6 @@ class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterSta
                             .Else(intLiteral(0))
                             .sum()
 
-                    val fillermarkCount =
-                        Case()
-                            .When(ChapterUserTable.isFillermarked eq true, intLiteral(1))
-                            .Else(intLiteral(0))
-                            .sum()
-
                     val statsByMangaId =
                         ChapterTable
                             .getWithUserData(userId)
@@ -158,7 +151,6 @@ class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterSta
                                 unreadCount,
                                 downloadCount,
                                 bookmarkCount,
-                                fillermarkCount,
                             ).where {
                                 ChapterTable.manga inIds ids
                             }.groupBy(ChapterTable.manga)
@@ -170,7 +162,6 @@ class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterSta
                                         unreadCount = it[unreadCount] ?: 0,
                                         downloadCount = it[downloadCount] ?: 0,
                                         bookmarkCount = it[bookmarkCount] ?: 0,
-                                        fillermarkCount = it[fillermarkCount] ?: 0,
                                     )
                             }
 

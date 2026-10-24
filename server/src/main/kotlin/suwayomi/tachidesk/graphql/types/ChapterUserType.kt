@@ -7,7 +7,6 @@ import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 class ChapterUserType(
     val isRead: Boolean,
     val isBookmarked: Boolean,
-    val isFillermarked: Boolean,
     val lastPageRead: Int,
     val lastReadAt: Long,
     val isDownloaded: Boolean,
@@ -20,7 +19,6 @@ class ChapterUserType(
     constructor(row: ResultRow) : this(
         row[ChapterUserTable.isRead],
         row[ChapterUserTable.isBookmarked],
-        row[ChapterUserTable.isFillermarked],
         row[ChapterUserTable.lastPageRead],
         row[ChapterUserTable.lastReadAt],
         row[ChapterUserTable.isDownloaded],

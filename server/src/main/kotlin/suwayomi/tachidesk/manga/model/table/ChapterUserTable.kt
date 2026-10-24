@@ -24,9 +24,6 @@ object ChapterUserTable : IntIdTable() {
     val isRead = bool("read").default(false)
     val isBookmarked = bool("bookmark").default(false)
 
-    // fork: per-user "filler" marker, see suwayomi.tachidesk.server.database.ForkSchema
-    val isFillermarked = bool("fillermark").default(false)
-
     // fork (Komikku port): bookmark color, see suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
     val bookmarkColor = integer("bookmark_color").default(0)
 

@@ -118,12 +118,12 @@ class KomikkuPortBackupTest : ApplicationTest() {
 
         val c2 = chapterRows("/c2")
         assertEquals(BookmarkColor.GREEN, c2[ChapterUserTable.bookmarkColor])
-        assertTrue(c2[ChapterUserTable.isFillermarked], "fillermarks stay fillermarks")
-        assertFalse(c2[ChapterUserTable.isBlacklisted], "fillermarks are not turned into blacklist entries")
+        assertTrue(c2[ChapterUserTable.isBlacklisted], "a legacy fillermark becomes a blacklist entry")
 
         val exported = BackupMangaHandler.backup(1, flags).single()
         assertEquals(komikkuManga.scanlatorPriority, exported.scanlatorPriority)
-        assertEquals(komikkuManga.blacklistedChapters, exported.blacklistedChapters)
+        assertEquals(2, exported.blacklistedChapters.size)
+        assertTrue(exported.blacklistedChapters.containsAll(komikkuManga.blacklistedChapters))
         assertEquals(komikkuManga.scanlatorRangeRules, exported.scanlatorRangeRules)
         assertEquals("enabled", exported.smartScanlatorMergeOverride)
         assertTrue(exported.scanlatorSettingsPresent)
@@ -148,7 +148,7 @@ class KomikkuPortBackupTest : ApplicationTest() {
 
         val settings = ScanlatorSettings.get(1, mangaId)
         assertEquals(listOf("B", "A"), settings.scanlatorPriority)
-        assertEquals(1, settings.blacklistedChapters.size)
+        assertEquals(2, settings.blacklistedChapters.size)
         assertEquals(true, settings.smartMergeOverride)
         assertEquals(BookmarkColor.GREEN, chapterRows("/c2")[ChapterUserTable.bookmarkColor])
     }

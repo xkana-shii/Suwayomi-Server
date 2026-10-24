@@ -7,7 +7,6 @@ package suwayomi.tachidesk.manga.impl
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import eu.kanade.tachiyomi.source.model.SChapter
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.jetbrains.exposed.v1.core.and
@@ -22,6 +21,7 @@ import suwayomi.tachidesk.manga.impl.backup.BackupFlags
 import suwayomi.tachidesk.manga.impl.backup.proto.handlers.BackupMangaHandler
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupChapter
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupManga
+import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.impl.util.lang.EMPTY
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
@@ -92,11 +92,14 @@ class ForkFeaturesTest : ApplicationTest() {
                 .singleOrNull()
         }
 
-    private fun chapterColumnExists(column: String): Boolean =
+    private fun columnExists(
+        table: String,
+        column: String,
+    ): Boolean =
         transaction {
             (
                 TransactionManager.current().exec(
-                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'CHAPTER' AND COLUMN_NAME = '$column'",
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '$table' AND COLUMN_NAME = '$column'",
                 ) { rs ->
                     rs.next()
                     rs.getInt(1)
@@ -105,7 +108,7 @@ class ForkFeaturesTest : ApplicationTest() {
         }
 
     @Test
-    fun `fork schema moves legacy chapter fillermarks to the user that owns the old data`() {
+    fun `fork schema turns legacy chapter fillermarks into blacklist entries of the user that owns the old data`() {
         val mangaId = createLibraryManga("FORK_SCHEMA_FILLERMARK")
         val chapterIds = insertChapters(mangaId, listOf("1", "2", "3"))
 
@@ -127,60 +130,24 @@ class ForkFeaturesTest : ApplicationTest() {
         ForkSchema.ensure()
 
         val chapter1 = assertNotNull(chapterUserRow(chapterIds.getValue("1")))
-        assertTrue(chapter1[ChapterUserTable.isFillermarked])
+        assertTrue(chapter1[ChapterUserTable.isBlacklisted])
         assertTrue(chapter1[ChapterUserTable.isRead], "existing per-user state must be kept")
         assertEquals(7, chapter1[ChapterUserTable.lastPageRead])
 
         val chapter2 = assertNotNull(chapterUserRow(chapterIds.getValue("2")), "fillermark-only chapter needs a user row")
-        assertTrue(chapter2[ChapterUserTable.isFillermarked])
+        assertTrue(chapter2[ChapterUserTable.isBlacklisted])
         assertFalse(chapter2[ChapterUserTable.isRead])
 
         val chapter3 = chapterUserRow(chapterIds.getValue("3"))
-        assertTrue(chapter3 == null || !chapter3[ChapterUserTable.isFillermarked])
+        assertTrue(chapter3 == null || !chapter3[ChapterUserTable.isBlacklisted])
 
-        assertFalse(chapterColumnExists("FILLERMARK"), "legacy column is dropped after the move")
+        assertEquals(2, ScanlatorSettings.get(1, mangaId).blacklistedChapters.size)
+        assertFalse(columnExists("CHAPTER", "FILLERMARK"), "legacy column is dropped after the move")
+        assertFalse(columnExists("CHAPTERUSER", "FILLERMARK"), "the fillermark column is removed once migrated")
     }
 
     @Test
-    fun `fillermark can be set and survives a chapter url change`() =
-        runTest {
-            val mangaId = createLibraryManga("FORK_FILLERMARK_URL_CHANGE")
-            val chapterIds = insertChapters(mangaId, listOf("1", "2"))
-
-            Chapter.modifyChapters(
-                1,
-                Chapter.MangaChapterBatchEditInput(
-                    chapterIds = listOf(chapterIds.getValue("2")),
-                    change = Chapter.ChapterChange(isFillermarked = true),
-                ),
-                mangaId,
-            )
-            assertTrue(chapterUserRow(chapterIds.getValue("2"))!![ChapterUserTable.isFillermarked])
-
-            val mangaEntry = transaction { MangaTable.selectAll().where { MangaTable.id eq mangaId }.first() }
-            val fetchedChapters =
-                listOf("1", "2-new").map { url ->
-                    SChapter.create().apply {
-                        this.url = url
-                        this.name = "Chapter ${url.removeSuffix("-new")}"
-                        this.chapter_number = url.removeSuffix("-new").toFloat()
-                    }
-                }
-            Chapter.updateChapterListDatabase(mangaEntry, fetchedChapters, source)
-
-            val newChapterId =
-                transaction {
-                    ChapterTable
-                        .selectAll()
-                        .where { (ChapterTable.manga eq mangaId) and (ChapterTable.url eq "2-new") }
-                        .single()[ChapterTable.id]
-                        .value
-                }
-            assertTrue(chapterUserRow(newChapterId)!![ChapterUserTable.isFillermarked])
-        }
-
-    @Test
-    fun `backup round trip keeps fillermarks, excluded scanlators and chapter filters`() {
+    fun `legacy backup fillermarks become blacklist entries and the 0x100 sort bit is kept as Mihon's`() {
         val errors = mutableListOf<Pair<Date, String>>()
         val manga =
             BackupManga(
@@ -189,12 +156,12 @@ class ForkFeaturesTest : ApplicationTest() {
                 title = "Fork Backup",
                 favorite = true,
                 excludedScanlators = listOf("Group A", "Group B"),
-                // unread only + bookmarked only (Mihon flags)
-                chapterFlags = 0x2 or 0x20,
+                // unread only + bookmarked only + Mihon "sort by chapter number" (0x100)
+                chapterFlags = 0x2 or 0x20 or 0x100,
                 chapters =
                     listOf(
-                        BackupChapter(url = "/c1", name = "c1", chapterNumber = 1f, sourceOrder = 0, fillermark = true),
-                        BackupChapter(url = "/c2", name = "c2", chapterNumber = 2f, sourceOrder = 1, bookmark = true),
+                        BackupChapter(url = "/c1", name = "c1", chapterNumber = 1f, sourceOrder = 1, fillermark = true),
+                        BackupChapter(url = "/c2", name = "c2", chapterNumber = 2f, sourceOrder = 0, bookmark = true),
                     ),
             )
 
@@ -213,33 +180,30 @@ class ForkFeaturesTest : ApplicationTest() {
         assertEquals("""["Group A","Group B"]""", meta["webUI_excludedScanlators"])
         assertEquals("true", meta["webUI_unread"])
         assertEquals("true", meta["webUI_bookmarked"])
+        assertFalse("webUI_fillermarked" in meta, "0x100 is Mihon's sort bit, not a fillermark filter")
+
+        val c1 =
+            transaction {
+                ChapterTable
+                    .selectAll()
+                    .where { ChapterTable.url eq "/c1" }
+                    .single()[ChapterTable.id]
+                    .value
+            }
+        assertTrue(chapterUserRow(c1)!![ChapterUserTable.isBlacklisted], "a legacy fillermark is restored as a blacklist entry")
 
         val exported = BackupMangaHandler.backup(1, allBackupFlags).single()
         assertEquals(listOf("Group A", "Group B"), exported.excludedScanlators)
-        assertEquals(0x2 or 0x20, exported.chapterFlags)
+        assertEquals(0x2 or 0x20 or 0x100, exported.chapterFlags)
         assertFalse(exported.meta.keys.any { it.startsWith("webUI_unread") || it == "webUI_excludedScanlators" })
-        assertTrue(exported.chapters.single { it.url == "/c1" }.fillermark)
-        assertFalse(exported.chapters.single { it.url == "/c2" }.fillermark)
+        assertTrue(exported.chapters.none { it.fillermark }, "the removed feature is not exported anymore")
+        assertEquals(1, exported.blacklistedChapters.size)
         assertTrue(exported.chapters.single { it.url == "/c2" }.bookmark)
 
-        // a restore over existing data merges the fillermark like the bookmark
-        BackupMangaHandler.restore(
-            1,
-            manga.copy(chapters = manga.chapters.map { it.copy(fillermark = false) }),
-            emptyMap(),
-            emptyMap(),
-            errors,
-            allBackupFlags,
-        )
+        // restoring the legacy backup again neither duplicates the entry nor replaces other entries
+        BackupMangaHandler.restore(1, manga, emptyMap(), emptyMap(), errors, allBackupFlags)
         assertTrue(errors.isEmpty(), errors.joinToString())
-        assertTrue(
-            BackupMangaHandler
-                .backup(1, allBackupFlags)
-                .single()
-                .chapters
-                .single { it.url == "/c1" }
-                .fillermark,
-        )
+        assertEquals(1, ScanlatorSettings.get(1, mangaId).blacklistedChapters.size)
     }
 
     @Test

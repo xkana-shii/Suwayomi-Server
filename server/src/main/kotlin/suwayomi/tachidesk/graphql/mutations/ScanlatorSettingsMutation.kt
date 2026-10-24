@@ -10,7 +10,6 @@ package suwayomi.tachidesk.graphql.mutations
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import graphql.schema.DataFetchingEnvironment
-import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -24,8 +23,6 @@ import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.chapter.ScanlatorRangeRule
 import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
 import suwayomi.tachidesk.manga.impl.chapter.SmartMergeOverrideChange
-import suwayomi.tachidesk.manga.model.table.ChapterTable
-import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.server.settings.userConfig
@@ -90,35 +87,6 @@ class ScanlatorSettingsMutation {
         ChapterVisibilityService.recompute(userId, listOf(mangaId))
 
         return payload(userId, mangaId, input.clientMutationId, dataFetchingEnvironment)
-    }
-
-    data class CopyFillermarksToBlacklistInput(
-        val clientMutationId: String? = null,
-        val mangaId: Int,
-    )
-
-    /**
-     * Fillermarks are a marker with their own filter, the blacklist hides chapters everywhere. They are kept apart,
-     * this explicitly blacklists the fillermarked chapters without removing their fillermarks.
-     */
-    @RequireAuth
-    fun copyFillermarksToBlacklist(
-        @GraphQLIgnore
-        userId: Int,
-        dataFetchingEnvironment: DataFetchingEnvironment,
-        input: CopyFillermarksToBlacklistInput,
-    ): UpdateMangaScanlatorSettingsPayload {
-        requireManga(input.mangaId)
-        val fillermarkedIds =
-            transaction {
-                ChapterTable
-                    .getWithUserData(userId)
-                    .select(ChapterTable.id)
-                    .where { (ChapterTable.manga eq input.mangaId) and (ChapterUserTable.isFillermarked eq true) }
-                    .map { it[ChapterTable.id].value }
-            }
-        ChapterVisibilityService.setBlacklisted(userId, fillermarkedIds, true)
-        return payload(userId, input.mangaId, input.clientMutationId, dataFetchingEnvironment)
     }
 
     private fun requireManga(mangaId: Int) {

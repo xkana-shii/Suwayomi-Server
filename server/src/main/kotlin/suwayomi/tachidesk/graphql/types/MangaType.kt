@@ -122,12 +122,6 @@ class MangaType(
             it.bookmarkCount
         }
 
-    // fork: kept top-level (not deprecated) for existing clients; also exposed as user.fillermarkCount
-    fun fillermarkCount(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Int> =
-        dataFetchingEnvironment.getValueFromDataLoader<Int, MangaChapterStats>("ChapterFlagCountForMangaDataLoader", id).thenApply {
-            it.fillermarkCount
-        }
-
     // fork (Komikku port)
     fun scanlatorSettings(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaScanlatorSettingsType> =
         dataFetchingEnvironment.getValueFromDataLoader("ScanlatorSettingsForMangaDataLoader", id)

@@ -47,8 +47,6 @@ class ChapterType(
     val lastReadAt: Long,
     @GraphQLDeprecated("Use user.isDownloaded instead")
     val isDownloaded: Boolean,
-    // fork: kept top-level (not deprecated) so existing clients keep working; also exposed as user.isFillermarked
-    val isFillermarked: Boolean,
     // fork (Komikku port): per-user bookmark color and chapter visibility, also exposed in user
     val bookmarkColor: Int = 0,
     val isBlacklisted: Boolean = false,
@@ -88,7 +86,6 @@ class ChapterType(
         row.getOrNull(ChapterUserTable.lastPageRead) ?: 0,
         row.getOrNull(ChapterUserTable.lastReadAt) ?: 0,
         row.getOrNull(ChapterUserTable.isDownloaded) ?: false,
-        row.getOrNull(ChapterUserTable.isFillermarked) ?: false,
         row.getOrNull(ChapterUserTable.bookmarkColor) ?: 0,
         row.getOrNull(ChapterUserTable.isBlacklisted) ?: false,
         row.getOrNull(ChapterUserTable.isMergeHidden) ?: false,
@@ -105,7 +102,6 @@ class ChapterType(
             chapterId = id,
             isRead = isRead,
             isBookmarked = isBookmarked,
-            isFillermarked = isFillermarked,
             lastPageRead = lastPageRead,
             lastReadAt = lastReadAt,
             isDownloaded = isDownloaded,

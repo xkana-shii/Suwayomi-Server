@@ -48,7 +48,6 @@ import java.util.concurrent.CompletableFuture
 class ChapterMutation {
     data class UpdateChapterPatch(
         val isBookmarked: Boolean? = null,
-        val isFillermarked: Boolean? = null,
         val isRead: Boolean? = null,
         val lastPageRead: Int? = null,
         @GraphQLDescription("fork: sets the bookmark with this color (0 = default color, see BookmarkColor)")
@@ -102,7 +101,7 @@ class ChapterMutation {
                 } else {
                     emptyMap()
                 }
-            if (patch.isRead != null || patch.isBookmarked != null || patch.isFillermarked != null || patch.lastPageRead != null ||
+            if (patch.isRead != null || patch.isBookmarked != null || patch.lastPageRead != null ||
                 patch.bookmarkColor != null
             ) {
                 val now = Instant.now().epochSecond
@@ -122,9 +121,6 @@ class ChapterMutation {
                     patch.bookmarkColor?.also {
                         this[ChapterUserTable.isBookmarked] = true
                         this[ChapterUserTable.bookmarkColor] = it
-                    }
-                    patch.isFillermarked?.also {
-                        this[ChapterUserTable.isFillermarked] = it
                     }
                     patch.lastPageRead?.also {
                         this[ChapterUserTable.lastPageRead] =

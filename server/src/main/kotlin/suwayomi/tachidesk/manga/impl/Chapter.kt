@@ -253,7 +253,6 @@ object Chapter {
                                 DeletedChapterUserData(
                                     isRead = it[ChapterUserTable.isRead],
                                     isBookmarked = it[ChapterUserTable.isBookmarked],
-                                    isFillermarked = it[ChapterUserTable.isFillermarked],
                                     lastPageRead = it[ChapterUserTable.lastPageRead],
                                     lastReadAt = it[ChapterUserTable.lastReadAt],
                                     version = it[ChapterUserTable.version],
@@ -337,7 +336,6 @@ object Chapter {
                         this[ChapterUserTable.user] = EntityID(userId, UserAccountTable)
                         this[ChapterUserTable.isRead] = userData.isRead
                         this[ChapterUserTable.isBookmarked] = userData.isBookmarked
-                        this[ChapterUserTable.isFillermarked] = userData.isFillermarked
                         // fork: a re-uploaded chapter keeps the bookmark color along with the bookmark
                         this[ChapterUserTable.bookmarkColor] = if (userData.isBookmarked) userData.bookmarkColor else 0
                         this[ChapterUserTable.lastPageRead] = userData.lastPageRead
@@ -553,7 +551,6 @@ object Chapter {
         isBookmarked: Boolean?,
         markPrevRead: Boolean?,
         lastPageRead: Int?,
-        isFillermarked: Boolean? = null,
     ): Int {
         val chapterId =
             transaction {
@@ -567,7 +564,7 @@ object Chapter {
 
                 val chapterIdValue = chapter[ChapterTable.id].value
 
-                if (listOf(isRead, isBookmarked, isFillermarked, lastPageRead).any { it != null }) {
+                if (listOf(isRead, isBookmarked, lastPageRead).any { it != null }) {
                     ChapterUserTable.upsert(ChapterUserTable.user, ChapterUserTable.chapter) {
                         it[ChapterUserTable.chapter] = chapterIdValue
                         it[ChapterUserTable.user] = userId
@@ -576,9 +573,6 @@ object Chapter {
                         }
                         isBookmarked?.also { isBookmarked ->
                             it[ChapterUserTable.isBookmarked] = isBookmarked
-                        }
-                        isFillermarked?.also { isFillermarked ->
-                            it[ChapterUserTable.isFillermarked] = isFillermarked
                         }
                         lastPageRead?.also { lastPageRead ->
                             it[ChapterUserTable.lastPageRead] = lastPageRead
@@ -614,7 +608,6 @@ object Chapter {
     private data class DeletedChapterUserData(
         val isRead: Boolean,
         val isBookmarked: Boolean,
-        val isFillermarked: Boolean,
         val lastPageRead: Int,
         val lastReadAt: Long,
         val version: Long,
@@ -629,8 +622,6 @@ object Chapter {
         val isBookmarked: Boolean? = null,
         val lastPageRead: Int? = null,
         val delete: Boolean? = null,
-        // fork; last so positional destructuring of the upstream fields keeps working
-        val isFillermarked: Boolean? = null,
     )
 
     @Serializable
@@ -654,7 +645,6 @@ object Chapter {
         // Make sure change is defined
         if (input.change == null) return
         val (isRead, isBookmarked, lastPageRead, delete) = input.change
-        val isFillermarked = input.change.isFillermarked
 
         // Handle deleting separately
         if (delete == true) {
@@ -662,7 +652,7 @@ object Chapter {
         }
 
         // return early if there are no other changes
-        if (listOfNotNull(isRead, isBookmarked, isFillermarked, lastPageRead).isEmpty()) return
+        if (listOfNotNull(isRead, isBookmarked, lastPageRead).isEmpty()) return
 
         // Make sure some filter is defined
         val condition =
@@ -714,9 +704,6 @@ object Chapter {
                 }
                 isBookmarked?.also {
                     this[ChapterUserTable.isBookmarked] = it
-                }
-                isFillermarked?.also {
-                    this[ChapterUserTable.isFillermarked] = it
                 }
                 lastPageRead?.also {
                     this[ChapterUserTable.lastPageRead] = it

@@ -34,12 +34,6 @@ class MangaUserType(
             it.bookmarkCount
         }
 
-    // fork
-    fun fillermarkCount(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Int> =
-        dataFetchingEnvironment.getValueFromDataLoader<Int, MangaChapterStats>("ChapterFlagCountForMangaDataLoader", mangaId).thenApply {
-            it.fillermarkCount
-        }
-
     fun lastReadChapter(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ChapterType?> =
         dataFetchingEnvironment.getValueFromDataLoader("LastReadChapterForMangaDataLoader", mangaId)
 

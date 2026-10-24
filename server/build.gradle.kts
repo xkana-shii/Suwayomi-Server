@@ -220,6 +220,8 @@ tasks {
             "testDatabaseUrl" to "databaseUrl",
             "testDatabaseUsername" to "databaseUsername",
             "testDatabasePassword" to "databasePassword",
+            // fork: run the tests while a real server uses the default port
+            "testServerPort" to "port",
         ).forEach { (gradleProp, configProp) ->
             project.findProperty(gradleProp)?.let {
                 systemProperty("suwayomi.tachidesk.config.server.$configProp", it)

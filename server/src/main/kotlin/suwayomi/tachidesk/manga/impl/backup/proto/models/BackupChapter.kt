@@ -15,6 +15,7 @@ data class BackupChapter(
     @ProtoNumber(3) var scanlator: String? = null,
     @ProtoNumber(4) var read: Boolean = false,
     @ProtoNumber(5) var bookmark: Boolean = false,
+    // fork: the removed fillermark feature; only read from older backups, which restore it as a blacklist entry
     @ProtoNumber(15) var fillermark: Boolean = false,
     // fork (Komikku port): bookmark color, Komikku's number and ids; null = unknown (keep the local color)
     @ProtoNumber(14) var bookmarkColor: Int? = null,
