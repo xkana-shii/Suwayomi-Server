@@ -207,4 +207,52 @@ class ChapterVisibilityServiceTest : ApplicationTest() {
             assertTrue(newIds.getValue("/2-new") !in unreadIds(mangaId))
             assertEquals(1, ScanlatorSettings.get(1, mangaId).blacklistedChapters.size, "the entry is never duplicated or lost")
         }
+
+    @Test
+    fun `a re-uploaded chapter keeps its bookmark color, other users keep theirs`() =
+        runTest {
+            val user2 = createUser("color-user-2")
+            val mangaId = createLibraryManga("VISIBILITY_COLOR")
+            val ids = insertChapters(mangaId, listOf(Triple("/2", 2f, "A"), Triple("/1", 1f, "A")))
+            transaction {
+                listOf(1 to BookmarkColor.RED, user2 to BookmarkColor.BLUE).forEach { (userId, color) ->
+                    ChapterUserTable.insert {
+                        it[chapter] = ids.getValue("/2")
+                        it[user] = userId
+                        it[isBookmarked] = true
+                        it[bookmarkColor] = color
+                    }
+                }
+            }
+
+            val mangaEntry = transaction { MangaTable.selectAll().where { MangaTable.id eq mangaId }.first() }
+            val fetched =
+                listOf("/2-new" to 2f, "/1" to 1f).map { (url, number) ->
+                    SChapter.create().apply {
+                        this.url = url
+                        this.name = "Chapter $number"
+                        this.chapter_number = number
+                        this.scanlator = "A"
+                    }
+                }
+            Chapter.updateChapterListDatabase(mangaEntry, fetched, source)
+            val newId =
+                transaction {
+                    ChapterTable
+                        .selectAll()
+                        .where { ChapterTable.url eq "/2-new" }
+                        .single()[ChapterTable.id]
+                        .value
+                }
+
+            fun color(userId: Int) =
+                transaction {
+                    ChapterUserTable
+                        .selectAll()
+                        .where { (ChapterUserTable.chapter eq newId) and (ChapterUserTable.user eq userId) }
+                        .single()[ChapterUserTable.bookmarkColor]
+                }
+            assertEquals(BookmarkColor.RED, color(1))
+            assertEquals(BookmarkColor.BLUE, color(user2))
+        }
 }

@@ -133,4 +133,23 @@ class ChapterVisibilityTest {
         assertEquals(listOf("C", "Gone", "A", "B"), ChapterVisibility.mergePriority(stored, listOf("C", "A", "B")))
         assertEquals(listOf("B", "Gone", "New", "A"), ChapterVisibility.mergePriority(listOf("A", "Gone", "B"), listOf("B", "New", "A")))
     }
+
+    @Test
+    fun `a preferred upload that appears later takes over, a missing one falls back to the priority`() {
+        val a5 = chapter(5.0, "A")
+        val c5 = chapter(5.0, "C")
+        val rules = listOf(ScanlatorRangeRule(1.0, Double.MAX_VALUE, "B"))
+        // B has no chapter 5 yet: the priority decides
+        assertEquals(setOf(c5.id), merged(listOf(a5, c5), priority = listOf("C", "A"), rules = rules))
+        val b5 = chapter(5.0, "B")
+        assertEquals(setOf(b5.id), merged(listOf(a5, c5, b5), priority = listOf("C", "A"), rules = rules))
+    }
+
+    @Test
+    fun `chapters without a valid number are always kept`() {
+        val unknown = chapter(-1.0, "A")
+        val nan = chapter(Double.NaN, "B")
+        val zero = chapter(0.0, "A")
+        assertEquals(setOf(unknown.id, nan.id, zero.id), merged(listOf(unknown, nan, zero), priority = listOf("B")))
+    }
 }

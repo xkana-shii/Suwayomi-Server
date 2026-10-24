@@ -10,7 +10,13 @@ package suwayomi.tachidesk.manga.impl.track
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.assertThrows
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
+import suwayomi.tachidesk.manga.impl.track.tracker.model.TrackImpl
+import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.MangaUserTable
+import suwayomi.tachidesk.manga.model.table.TrackRecordTable
 import suwayomi.tachidesk.test.ApplicationTest
+import suwayomi.tachidesk.test.clearTables
+import suwayomi.tachidesk.test.createLibraryManga
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -49,5 +55,34 @@ class TrackerEditsAndMetadataTest : ApplicationTest() {
             assertThrows<TrackerMetadata.NotTrackedException> { TrackerMetadata.getMetadata(1, -1, TrackerManager.MYANIMELIST) }
             assertEquals(listOf("Action", "Drama"), TrackerMetadata.autofillTags(listOf(" Action", "action ", "", "Drama")))
             assertEquals(listOf("Drama", "Action"), TrackerMetadata.mergeTags(listOf("Drama"), listOf("drama", "Action")))
+        }
+
+    @Test
+    fun `trackers without credentials are reported as skipped, never as updated`() =
+        runTest {
+            val mangaId = createLibraryManga("UNIFIED_EDIT_NO_LOGIN")
+            try {
+                Track.insertTrackRecord(
+                    1,
+                    TrackImpl().apply {
+                        manga_id = mangaId
+                        tracker_id = TrackerManager.MYANIMELIST
+                        remote_id = 1
+                        title = "t"
+                    },
+                )
+                val results = UnifiedTrackerEdits.apply(1, mangaId, UnifiedTrackerEdits.Edit(status = UnifiedTrackStatus.COMPLETED))
+                assertEquals(1, results.size)
+                assertEquals(UnifiedTrackerEdits.Outcome.SKIPPED, results.single().outcome)
+                assertTrue(
+                    results
+                        .single()
+                        .messages
+                        .single()
+                        .startsWith("Not logged in"),
+                )
+            } finally {
+                clearTables(TrackRecordTable, MangaUserTable, MangaTable)
+            }
         }
 }
