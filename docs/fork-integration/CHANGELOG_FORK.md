@@ -47,3 +47,20 @@ downloads, Windows AWT tray, fork update/release channels, launcher server updat
 
 ## Remaining limitations
 See "Not tested" and "Known issues" in `REGRESSION_TEST_REPORT.md`.
+
+# Fork changelog — Komikku feature ports (October 2026)
+
+Ported from the Komikku fork (details: KOMIKKU_FEATURE_PORTS.md, KOMIKKU_PORT_AUDIT.md):
+- Smart Scanlator Merge with global/per-manga settings, scanlator priority, range rules and an auto-saving
+  scanlator settings dialog.
+- Chapter blacklist (URL-first keys, reveal mode, backup/restore), respected by counts, Updates, reader and downloads.
+- Colored bookmarks (Komikku palette, long press / context menu, default and last color) and a tri-state bookmark
+  color filter.
+- Smart Categories bound to tracker statuses, scoped by category branch.
+- Nested categories: hierarchy management, tree-aware Set categories, library tabs with subcategory chips.
+- Tracker metadata autofill (MyAnimeList, AniList, MangaUpdates, MangaBaka) and one edit for all trackers.
+- Optional background refresh of opened manga.
+- New chapter filters: bookmark colors, blacklisted chapters, merged duplicates.
+
+Fillermarks are unchanged and remain a separate feature (optional copy into the blacklist). Backups use Komikku's
+proto numbers for the new data (see KOMIKKU_PORT_MIGRATIONS.md).
