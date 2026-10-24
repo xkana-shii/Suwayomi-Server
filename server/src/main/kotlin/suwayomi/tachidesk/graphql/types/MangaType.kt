@@ -68,6 +68,7 @@ class MangaType(
 
             dataFetchingEnvironment.getDataLoader<Int, Int>("ChapterFlagCountForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, Int>("HasDuplicateChaptersForMangaDataLoader")?.clear(mangaId)
+            dataFetchingEnvironment.getDataLoader<Int, MangaScanlatorSettingsType>("ScanlatorSettingsForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LastReadChapterForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LatestReadChapterForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LatestFetchedChapterForMangaDataLoader")?.clear(mangaId)
@@ -126,6 +127,10 @@ class MangaType(
         dataFetchingEnvironment.getValueFromDataLoader<Int, MangaChapterStats>("ChapterFlagCountForMangaDataLoader", id).thenApply {
             it.fillermarkCount
         }
+
+    // fork (Komikku port)
+    fun scanlatorSettings(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaScanlatorSettingsType> =
+        dataFetchingEnvironment.getValueFromDataLoader("ScanlatorSettingsForMangaDataLoader", id)
 
     fun hasDuplicateChapters(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Boolean> =
         dataFetchingEnvironment.getValueFromDataLoader("HasDuplicateChaptersForMangaDataLoader", id)

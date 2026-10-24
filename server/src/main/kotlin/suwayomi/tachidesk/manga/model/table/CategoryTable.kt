@@ -31,6 +31,10 @@ object CategoryTable : IntIdTable() {
     val isSyncing = bool("is_syncing").default(false)
     val user = reference("user_id", UserAccountTable, ReferenceOption.CASCADE)
 
+    // fork (Komikku port): nested categories (null = top level) and Smart Category tracker status binding
+    val parentId = integer("parent_id").nullable()
+    val trackStatus = integer("track_status").nullable()
+
     init {
         index(false, id, user)
     }
@@ -48,4 +52,6 @@ fun CategoryTable.toDataClass(categoryEntry: ResultRow) =
         version = categoryEntry[version],
         uid = categoryEntry[uid],
         lastModifiedAt = categoryEntry[lastModifiedAt],
+        parentId = categoryEntry[parentId],
+        trackStatus = categoryEntry[trackStatus],
     )

@@ -52,6 +52,7 @@ import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.PageTable
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.server.settings.userConfig
 import suwayomi.tachidesk.server.settings.value
 import java.time.Instant
@@ -258,6 +259,7 @@ object Chapter {
                                     version = it[ChapterUserTable.version],
                                     isDownloaded = it[ChapterUserTable.isDownloaded],
                                     isDownloadRequested = it[ChapterUserTable.isDownloadRequested],
+                                    bookmarkColor = it[ChapterUserTable.bookmarkColor],
                                 ),
                             )
                         }
@@ -336,6 +338,8 @@ object Chapter {
                         this[ChapterUserTable.isRead] = userData.isRead
                         this[ChapterUserTable.isBookmarked] = userData.isBookmarked
                         this[ChapterUserTable.isFillermarked] = userData.isFillermarked
+                        // fork: a re-uploaded chapter keeps the bookmark color along with the bookmark
+                        this[ChapterUserTable.bookmarkColor] = if (userData.isBookmarked) userData.bookmarkColor else 0
                         this[ChapterUserTable.lastPageRead] = userData.lastPageRead
                         this[ChapterUserTable.lastReadAt] = userData.lastReadAt
                         // migrate the per-user download state only if the shared download file was preserved,
@@ -409,6 +413,9 @@ object Chapter {
             }
         }
 
+        // fork: blacklist entries and Smart Scanlator Merge choices follow the new chapter list (before auto downloads)
+        ChapterVisibilityService.recomputeForManga(mangaEntry[MangaTable.id].value)
+
         val inLibraryUserIds =
             transaction {
                 MangaUserTable
@@ -468,6 +475,14 @@ object Chapter {
             return
         }
 
+        // fork: never download chapters the user hid (blacklist) or duplicates Smart Scanlator Merge does not show
+        val hiddenChapterIds = ChapterVisibilityService.hiddenChapterIds(userId, newChapters.map { it.id })
+        val visibleNewChapters = newChapters.filter { it.id !in hiddenChapterIds }
+        if (visibleNewChapters.isEmpty()) {
+            log.debug { "all new chapters are hidden" }
+            return
+        }
+
         val wasInitialFetch = prevNumberOfChapters == 0
         if (wasInitialFetch) {
             log.debug { "skipping download on initial fetch" }
@@ -486,7 +501,7 @@ object Chapter {
             return
         }
 
-        val chapterIdsToDownload = getNewChapterIdsToDownload(userId, newChapters, prevLatestChapterNumber)
+        val chapterIdsToDownload = getNewChapterIdsToDownload(userId, visibleNewChapters, prevLatestChapterNumber)
 
         if (chapterIdsToDownload.isEmpty()) {
             log.debug { "no chapters available for download" }
@@ -605,6 +620,7 @@ object Chapter {
         val version: Long,
         val isDownloaded: Boolean,
         val isDownloadRequested: Boolean,
+        val bookmarkColor: Int,
     )
 
     @Serializable

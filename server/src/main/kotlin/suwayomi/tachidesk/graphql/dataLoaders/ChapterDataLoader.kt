@@ -17,6 +17,7 @@ import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.Slf4jSqlDebugLogger
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.intLiteral
@@ -39,6 +40,7 @@ import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.server.JavalinSetup
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.user.requireUser
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 class ChapterDataLoader : KotlinDataLoader<Int, ChapterType> {
     override val dataLoaderName = "ChapterDataLoader"
@@ -124,7 +126,7 @@ class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterSta
 
                     val unreadCount =
                         Case()
-                            .When(ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull()), intLiteral(1))
+                            .When((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp(), intLiteral(1))
                             .Else(intLiteral(0))
                             .sum()
 
@@ -136,7 +138,7 @@ class ChapterFlagCountForMangaDataLoader : KotlinDataLoader<Int, MangaChapterSta
 
                     val bookmarkCount =
                         Case()
-                            .When(ChapterUserTable.isBookmarked eq true, intLiteral(1))
+                            .When((ChapterUserTable.isBookmarked eq true) and chapterVisibleOp(), intLiteral(1))
                             .Else(intLiteral(0))
                             .sum()
 
@@ -319,7 +321,7 @@ class FirstUnreadChapterForMangaDataLoader : KotlinDataLoader<Int, ChapterType> 
                         firstChapterPerManga(
                             mangaIds = ids,
                             userId = userId,
-                            filter = ChapterUserTable.isRead eq false or ChapterUserTable.isRead.isNull(),
+                            filter = (ChapterUserTable.isRead eq false or ChapterUserTable.isRead.isNull()) and chapterVisibleOp(),
                             orderBy = listOf(ChapterTable.sourceOrder to SortOrder.ASC),
                         )
                     ids.map { chaptersByMangaId[it] }

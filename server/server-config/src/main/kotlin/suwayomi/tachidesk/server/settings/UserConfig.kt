@@ -336,6 +336,16 @@ class UserConfig {
         group = SettingGroup.SYNCYOMI,
         defaultValue = true,
     )
+
+    // fork settings use proto numbers from 1000 on, so upstream additions never collide with them
+
+    /** fork (Komikku port): Smart Scanlator Merge for every manga without its own override */
+    val smartScanlatorMerge: UserSetting<Boolean> = userSetting(
+        key = "smartScanlatorMerge",
+        protoNumber = 1000,
+        group = SettingGroup.MISC,
+        defaultValue = false,
+    )
 }
 
 val userConfig: UserConfig by lazy { UserConfig() }

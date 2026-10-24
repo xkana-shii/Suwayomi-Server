@@ -11,6 +11,7 @@ import com.expediagroup.graphql.dataloader.KotlinDataLoaderRegistryFactory
 import suwayomi.tachidesk.graphql.dataLoaders.CategoriesForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryCountForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.ScanlatorSettingsForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryMetaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.ChapterCountForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.ChapterDataLoader
@@ -64,6 +65,7 @@ class TachideskDataLoaderRegistryFactory {
                 ChaptersForMangaDataLoader(),
                 ChapterCountForMangaDataLoader(),
                 ChapterFlagCountForMangaDataLoader(),
+                ScanlatorSettingsForMangaDataLoader(),
                 HasDuplicateChaptersForMangaDataLoader(),
                 LastReadChapterForMangaDataLoader(),
                 LatestReadChapterForMangaDataLoader(),

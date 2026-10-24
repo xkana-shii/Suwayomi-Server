@@ -46,6 +46,7 @@ import suwayomi.tachidesk.opds.util.OpdsStringUtil.formatSourceName
 import suwayomi.tachidesk.server.settings.userConfig
 import suwayomi.tachidesk.server.settings.value
 import suwayomi.tachidesk.server.user.ForbiddenException
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 /**
  * Applies dynamic filters based on the current user configuration and cross-filters.
@@ -89,7 +90,7 @@ fun Query.applyOpdsMangaFilter(
                     andWhere {
                         MangaTable.id inSubQuery
                             ChapterTable.getWithUserData(userId).select(ChapterTable.manga).where {
-                                ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())
+                                (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()
                             }
                     }
                 }
@@ -157,7 +158,7 @@ object MangaRepository {
         transaction {
             val unreadCountExpr =
                 Case()
-                    .When(ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull()), intLiteral(1))
+                    .When((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp(), intLiteral(1))
                     .Else(intLiteral(0))
                     .sum()
             val unreadCount = unreadCountExpr.alias("unread_count")
@@ -393,7 +394,7 @@ object MangaRepository {
     ) {
         val unreadCountExpr =
             Case()
-                .When(ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull()), intLiteral(1))
+                .When((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp(), intLiteral(1))
                 .Else(intLiteral(0))
                 .sum()
         val lastReadAtExpr = ChapterUserTable.lastReadAt.max()
@@ -454,7 +455,7 @@ object MangaRepository {
                     .andWhere {
                         MangaTable.id inSubQuery
                             ChapterTable.getWithUserData(userId).select(ChapterTable.manga).where {
-                                ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())
+                                (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()
                             }
                     }.count()
             val downloadedCount =

@@ -36,6 +36,7 @@ import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.manga.model.table.toDataClass
 import suwayomi.tachidesk.server.database.dbTransaction
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 object CategoryManga {
     fun addMangaToCategory(
@@ -127,7 +128,7 @@ object CategoryManga {
                     .getWithUserData(userId)
                     .select(ChapterTable.id.count())
                     .where {
-                        (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and
+                        ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()) and
                             (ChapterTable.manga eq MangaTable.id)
                     },
             )

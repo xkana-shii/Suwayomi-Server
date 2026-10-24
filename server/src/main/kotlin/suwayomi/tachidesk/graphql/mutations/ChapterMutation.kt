@@ -2,6 +2,9 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
+import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import kotlinx.coroutines.GlobalScope
@@ -48,6 +51,10 @@ class ChapterMutation {
         val isFillermarked: Boolean? = null,
         val isRead: Boolean? = null,
         val lastPageRead: Int? = null,
+        @GraphQLDescription("fork: sets the bookmark with this color (0 = default color, see BookmarkColor)")
+        val bookmarkColor: Int? = null,
+        @GraphQLDescription("fork: adds the chapters to (or removes them from) the chapter blacklist of their manga")
+        val isBlacklisted: Boolean? = null,
     )
 
     data class UpdateChapterPayload(
@@ -80,6 +87,7 @@ class ChapterMutation {
         if (ids.isEmpty()) {
             return
         }
+        patch.bookmarkColor?.let { require(BookmarkColor.isValid(it)) { "Unknown bookmark color $it" } }
 
         transaction {
             val chapterIdToPageCount =
@@ -94,7 +102,9 @@ class ChapterMutation {
                 } else {
                     emptyMap()
                 }
-            if (patch.isRead != null || patch.isBookmarked != null || patch.isFillermarked != null || patch.lastPageRead != null) {
+            if (patch.isRead != null || patch.isBookmarked != null || patch.isFillermarked != null || patch.lastPageRead != null ||
+                patch.bookmarkColor != null
+            ) {
                 val now = Instant.now().epochSecond
 
                 ChapterUserTable.batchUpsert(ids, ChapterUserTable.chapter, ChapterUserTable.user) { chapterId ->
@@ -106,6 +116,12 @@ class ChapterMutation {
                     }
                     patch.isBookmarked?.also {
                         this[ChapterUserTable.isBookmarked] = it
+                        // fork: removing a bookmark also removes its color; adding one keeps the current color
+                        if (!it) this[ChapterUserTable.bookmarkColor] = BookmarkColor.DEFAULT
+                    }
+                    patch.bookmarkColor?.also {
+                        this[ChapterUserTable.isBookmarked] = true
+                        this[ChapterUserTable.bookmarkColor] = it
                     }
                     patch.isFillermarked?.also {
                         this[ChapterUserTable.isFillermarked] = it
@@ -118,6 +134,8 @@ class ChapterMutation {
                 }
             }
         }
+
+        patch.isBlacklisted?.let { ChapterVisibilityService.setBlacklisted(userId, ids, it) }
 
         // Sync with KoreaderSync when progress is updated
         if (patch.lastPageRead != null || patch.isRead == true) {

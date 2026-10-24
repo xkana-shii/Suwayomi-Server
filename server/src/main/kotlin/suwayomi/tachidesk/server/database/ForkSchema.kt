@@ -10,6 +10,7 @@ package suwayomi.tachidesk.server.database
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.server.database.migration.helpers.UNLIMITED_TEXT
 import suwayomi.tachidesk.server.database.migration.helpers.toSqlName
 
 /**
@@ -29,7 +30,37 @@ object ForkSchema {
     fun ensure() {
         transaction {
             ensureChapterUserFillermark()
+            ensureKomikkuPortColumns()
         }
+    }
+
+    /**
+     * Columns of the features ported from the Komikku fork (see docs/fork-integration/KOMIKKU_PORT_MIGRATIONS.md).
+     * All of them are additive with defaults that keep the previous behaviour, so existing rows need no backfill:
+     * - CHAPTERUSER: bookmark color (0 = default color) and the derived visibility flags of the chapter blacklist and
+     *   Smart Scanlator Merge (recomputed from the MANGAUSER rules, never a source of truth)
+     * - MANGAUSER: the per-user scanlator rules (null = never configured)
+     * - CATEGORY: the parent category (null = top level) and the Smart Category tracker status binding
+     */
+    private fun ensureKomikkuPortColumns() {
+        val text = UNLIMITED_TEXT
+        listOf(
+            Triple("CHAPTERUSER", "BOOKMARK_COLOR", "INT DEFAULT 0 NOT NULL"),
+            Triple("CHAPTERUSER", "BLACKLISTED", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            Triple("CHAPTERUSER", "MERGE_HIDDEN", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            Triple("MANGAUSER", "BLACKLISTED_CHAPTERS", "$text NULL"),
+            Triple("MANGAUSER", "SCANLATOR_PRIORITY", "$text NULL"),
+            Triple("MANGAUSER", "SCANLATOR_RANGE_RULES", "$text NULL"),
+            Triple("MANGAUSER", "SMART_MERGE_OVERRIDE", "BOOLEAN NULL"),
+            Triple("CATEGORY", "PARENT_ID", "INT NULL"),
+            Triple("CATEGORY", "TRACK_STATUS", "INT NULL"),
+        ).forEach { (table, column, definition) ->
+            if (!columnExists(table, column)) {
+                logger.info { "ForkSchema: adding ${table.toSqlName()}.$column" }
+                exec("ALTER TABLE ${table.toSqlName()} ADD COLUMN IF NOT EXISTS $column $definition")
+            }
+        }
+        exec("CREATE INDEX IF NOT EXISTS FORK_CATEGORY_PARENT_ID ON ${"CATEGORY".toSqlName()} (PARENT_ID)")
     }
 
     /**

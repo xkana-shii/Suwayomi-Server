@@ -71,6 +71,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.time.Instant
 import kotlin.time.Duration.Companion.minutes
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 private val logger = KotlinLogging.logger { }
 
@@ -367,7 +368,7 @@ object Manga {
                 ChapterTable
                     .getWithUserData(userId)
                     .selectAll()
-                    .where { (ChapterTable.manga eq mangaId) and (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) }
+                    .where { (ChapterTable.manga eq mangaId) and ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()) }
                     .count()
 
             val downloadCount =
@@ -655,7 +656,7 @@ object Manga {
             ChapterTable
                 .getWithUserData(userId)
                 .selectAll()
-                .where { (ChapterTable.manga eq mangaId) and (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) }
+                .where { (ChapterTable.manga eq mangaId) and ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()) }
                 .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
                 .map { ChapterTable.toDataClass(it) }
         }

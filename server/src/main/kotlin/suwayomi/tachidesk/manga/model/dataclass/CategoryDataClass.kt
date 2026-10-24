@@ -33,4 +33,7 @@ data class CategoryDataClass(
     val version: Long,
     val uid: Long,
     val lastModifiedAt: Long,
+    // fork (Komikku port)
+    val parentId: Int? = null,
+    val trackStatus: Int? = null,
 )

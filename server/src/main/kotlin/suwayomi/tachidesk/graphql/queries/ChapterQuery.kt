@@ -7,6 +7,9 @@
 
 package suwayomi.tachidesk.graphql.queries
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
+import org.jetbrains.exposed.v1.core.not
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
@@ -136,6 +139,9 @@ class ChapterQuery {
         val fetchedAt: Long? = null,
         val isDownloaded: Boolean? = null,
         val pageCount: Int? = null,
+        val bookmarkColor: Int? = null,
+        val isBlacklisted: Boolean? = null,
+        val isMergeHidden: Boolean? = null,
     ) : HasGetOp<Any?> {
         override fun getOp(value: Any?): Op<Boolean>? {
             val opAnd = OpAnd()
@@ -156,6 +162,9 @@ class ChapterQuery {
             opAnd.eq(fetchedAt, ChapterTable.fetchedAt)
             opAnd.eq(isDownloaded, coalesceDefault(ChapterUserTable.isDownloaded, false))
             opAnd.eq(pageCount, ChapterTable.pageCount)
+            opAnd.eq(bookmarkColor, coalesceDefault(ChapterUserTable.bookmarkColor, 0))
+            opAnd.eq(isBlacklisted, coalesceDefault(ChapterUserTable.isBlacklisted, false))
+            opAnd.eq(isMergeHidden, coalesceDefault(ChapterUserTable.isMergeHidden, false))
 
             return opAnd.op
         }
@@ -180,6 +189,12 @@ class ChapterQuery {
         val isDownloaded: BooleanFilter? = null,
         val pageCount: IntFilter? = null,
         val inLibrary: BooleanFilter? = null,
+        // fork (Komikku port)
+        val bookmarkColor: IntFilter? = null,
+        val isBlacklisted: BooleanFilter? = null,
+        val isMergeHidden: BooleanFilter? = null,
+        @GraphQLDescription("Hidden by the chapter blacklist or Smart Scanlator Merge")
+        val isHidden: BooleanFilter? = null,
         override val and: List<ChapterFilter>? = null,
         override val or: List<ChapterFilter>? = null,
         override val not: ChapterFilter? = null,
@@ -203,6 +218,15 @@ class ChapterQuery {
                 andFilterWithCompare(ChapterTable.fetchedAt, fetchedAt),
                 andFilterWithCompare(coalesceDefault(ChapterUserTable.isDownloaded, false), isDownloaded),
                 andFilterWithCompare(ChapterTable.pageCount, pageCount),
+                andFilterWithCompare(coalesceDefault(ChapterUserTable.bookmarkColor, 0), bookmarkColor),
+                andFilterWithCompare(coalesceDefault(ChapterUserTable.isBlacklisted, false), isBlacklisted),
+                andFilterWithCompare(coalesceDefault(ChapterUserTable.isMergeHidden, false), isMergeHidden),
+                // only equalTo/notEqualTo: the flag is derived from two columns
+                when (isHidden?.equalTo ?: isHidden?.notEqualTo?.not()) {
+                    true -> not(chapterVisibleOp())
+                    false -> chapterVisibleOp()
+                    null -> null
+                },
             )
 
         fun getLibraryOp() = andFilterWithCompare(MangaUserTable.inLibrary, inLibrary)

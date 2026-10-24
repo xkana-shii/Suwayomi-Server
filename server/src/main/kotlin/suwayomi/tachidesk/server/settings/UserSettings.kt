@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.server.settings
 
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import com.typesafe.config.ConfigFactory
 import io.github.config4k.ClassContainer
 import io.github.config4k.readers.SelectReader
@@ -98,7 +99,9 @@ object UserSettings {
         }
 
         val e = entry(userId, setting)
+        val previous = e.flow.value
         e.flow.value = value
+        if (previous != value) onChanged(userId, setting.key)
     }
 
     fun reset(
@@ -112,6 +115,7 @@ object UserSettings {
         }
 
         syncCacheToDefault(userId, setting)
+        onChanged(userId, setting.key)
     }
 
     /**
@@ -144,6 +148,17 @@ object UserSettings {
                 val setting = UserSettingsRegistry.get(settingKey) ?: return@forEach
                 syncCacheToDefault(userId, setting)
             }
+        onChanged(userId, userConfig.smartScanlatorMerge.key)
+    }
+
+    /** fork: settings whose value is materialized elsewhere and has to be recomputed when it changes */
+    private fun onChanged(
+        userId: Int,
+        key: String,
+    ) {
+        if (key == userConfig.smartScanlatorMerge.key) {
+            ChapterVisibilityService.recomputeForUser(userId)
+        }
     }
 
     private fun readStored(

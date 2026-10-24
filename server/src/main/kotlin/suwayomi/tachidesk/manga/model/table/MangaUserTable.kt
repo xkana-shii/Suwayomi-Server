@@ -12,6 +12,7 @@ import org.jetbrains.exposed.v1.core.dao.id.IntIdTable
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.leftJoin
 import suwayomi.tachidesk.global.model.table.UserAccountTable
+import suwayomi.tachidesk.manga.model.table.columns.unlimitedVarchar
 
 object MangaUserTable : IntIdTable() {
     val manga = reference("manga", MangaTable, ReferenceOption.CASCADE)
@@ -23,6 +24,14 @@ object MangaUserTable : IntIdTable() {
     val viewer = integer("viewer").default(0)
     val viewerFlags = integer("viewer_flags").nullable()
     val chapterFlags = integer("chapter_flags").default(0)
+
+    // fork (Komikku port): per-user scanlator rules, see suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
+    val blacklistedChapters = unlimitedVarchar("blacklisted_chapters").nullable()
+    val scanlatorPriority = unlimitedVarchar("scanlator_priority").nullable()
+    val scanlatorRangeRules = unlimitedVarchar("scanlator_range_rules").nullable()
+
+    /** null = follow the user's global Smart Scanlator Merge setting */
+    val smartMergeOverride = bool("smart_merge_override").nullable()
 
     // syncyomi
     val version = long("version").default(0)

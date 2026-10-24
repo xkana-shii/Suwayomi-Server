@@ -12,6 +12,10 @@ class ChapterUserType(
     val lastReadAt: Long,
     val isDownloaded: Boolean,
     val chapterId: Int,
+    // fork (Komikku port)
+    val bookmarkColor: Int = 0,
+    val isBlacklisted: Boolean = false,
+    val isMergeHidden: Boolean = false,
 ) : Node {
     constructor(row: ResultRow) : this(
         row[ChapterUserTable.isRead],
@@ -21,5 +25,8 @@ class ChapterUserType(
         row[ChapterUserTable.lastReadAt],
         row[ChapterUserTable.isDownloaded],
         row[ChapterUserTable.chapter].value,
+        row[ChapterUserTable.bookmarkColor],
+        row[ChapterUserTable.isBlacklisted],
+        row[ChapterUserTable.isMergeHidden],
     )
 }

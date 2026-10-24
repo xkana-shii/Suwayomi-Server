@@ -7,7 +7,11 @@ package suwayomi.tachidesk.manga.model.table
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ReferenceOption
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.dao.id.IntIdTable
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.leftJoin
@@ -22,6 +26,13 @@ object ChapterUserTable : IntIdTable() {
 
     // fork: per-user "filler" marker, see suwayomi.tachidesk.server.database.ForkSchema
     val isFillermarked = bool("fillermark").default(false)
+
+    // fork (Komikku port): bookmark color, see suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
+    val bookmarkColor = integer("bookmark_color").default(0)
+
+    // fork (Komikku port): derived visibility, recomputed by suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
+    val isBlacklisted = bool("blacklisted").default(false)
+    val isMergeHidden = bool("merge_hidden").default(false)
     val lastPageRead = integer("last_page_read").default(0)
     val lastReadAt = long("last_read_at").default(0)
 
@@ -47,3 +58,11 @@ fun ChapterTable.getWithUserData(userId: Int) =
         otherColumn = { ChapterUserTable.chapter },
         additionalConstraint = { ChapterUserTable.user eq userId },
     )
+
+/**
+ * fork: the chapter is not hidden by the chapter blacklist or Smart Scanlator Merge for the joined user
+ * (see [suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService]); chapters without user data are visible.
+ */
+fun chapterVisibleOp(): Op<Boolean> =
+    (ChapterUserTable.isBlacklisted.isNull() or (ChapterUserTable.isBlacklisted eq false)) and
+        (ChapterUserTable.isMergeHidden.isNull() or (ChapterUserTable.isMergeHidden eq false))
