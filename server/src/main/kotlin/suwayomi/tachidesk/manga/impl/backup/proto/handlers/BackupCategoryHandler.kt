@@ -7,6 +7,9 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
+import suwayomi.tachidesk.manga.impl.category.SmartCategories
+import suwayomi.tachidesk.manga.impl.category.CategoryTree
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -42,6 +45,8 @@ object BackupCategoryHandler {
                     emptyMap()
                 }
 
+            val uidById = categories.associate { it[CategoryTable.id].value to it[CategoryTable.uid] }
+
             categories.map {
                 BackupCategory(
                     it[CategoryTable.name],
@@ -52,6 +57,12 @@ object BackupCategoryHandler {
                     it[CategoryTable.lastModifiedAt],
                 ).apply {
                     this.meta = categoryToMeta[it[CategoryTable.id].value] ?: emptyMap()
+                    // fork (Komikku port): hierarchy and Smart Category binding
+                    id = it[CategoryTable.id].value.toLong()
+                    parentId = it[CategoryTable.parentId]?.toLong() ?: 0L
+                    parentUid = it[CategoryTable.parentId]?.let(uidById::get) ?: 0L
+                    trackStatus = it[CategoryTable.trackStatus]
+                    hierarchyKnown = true
                 }
             }
         }
@@ -62,7 +73,6 @@ object BackupCategoryHandler {
         syncMode: SyncRestoreMode = SyncRestoreMode.NONE,
     ): Map<Int, Int> {
         val dbCategories = Category.getCategoryList(userId, includeDefault = true)
-        val dbCategoriesByName = dbCategories.associateBy { it.name }
         val dbCategoriesByUid = dbCategories.associateBy { it.uid }
 
         var nextOrder = dbCategories.maxOfOrNull { it.order }?.plus(1) ?: 0
@@ -75,10 +85,30 @@ object BackupCategoryHandler {
             .sortedBy { (_, backupCategory) -> backupCategory.order }
             .forEachIndexed { rank, (index, _) -> ranks[index] = rank + 1 }
 
-        val categoryIds =
-            transaction {
-                backupCategories
-                    .mapIndexed { index, backupCategory ->
+        // fork (Komikku port): parents are resolved before their children, so a nested category is matched by name
+        // among the children of its (restored) parent only; names only have to be unique among siblings
+        val backupIndexById = backupCategories.withIndex().filter { it.value.id != 0L }.associate { it.value.id to it.index }
+        val backupIndexByUid = backupCategories.withIndex().filter { it.value.uid != 0L }.associate { it.value.uid to it.index }
+
+        fun backupParentIndex(backupCategory: BackupCategory): Int? =
+            when {
+                backupCategory.parentUid != 0L -> backupIndexByUid[backupCategory.parentUid]
+                backupCategory.parentId != 0L -> backupIndexById[backupCategory.parentId]
+                else -> null
+            } ?: backupCategory.parentId.takeIf { it != 0L }?.let(backupIndexById::get)
+
+        val backupTree =
+            CategoryTree(backupCategories.indices.associateWith { index -> backupParentIndex(backupCategories[index]) })
+        val processingOrder = backupCategories.indices.sortedBy { backupTree.depth(it) }
+        val restoredIds = IntArray(backupCategories.size)
+
+        fun localParentOf(index: Int): Int? = backupTree.parentOf(index)?.let { restoredIds[it].takeIf { id -> id != 0 } }
+
+        transaction {
+            processingOrder.forEach { index ->
+                val backupCategory = backupCategories[index]
+                restoredIds[index] =
+                    run restoreCategory@{
                         var dbCategory =
                             if (backupCategory.uid != 0L) {
                                 dbCategoriesByUid[backupCategory.uid]
@@ -87,13 +117,21 @@ object BackupCategoryHandler {
                             }
 
                         if (dbCategory == null) {
-                            dbCategory = dbCategoriesByName[backupCategory.name]
+                            val sameName = dbCategories.filter { it.name == backupCategory.name }
+                            dbCategory =
+                                if (backupCategory.hierarchyKnown) {
+                                    val parent = localParentOf(index)
+                                    sameName.firstOrNull { it.parentId == parent }
+                                } else {
+                                    // a backup without hierarchy (Mihon, older versions): prefer a top level category
+                                    sameName.firstOrNull { it.parentId == null } ?: sameName.singleOrNull()
+                                }
                         }
 
                         if (dbCategory != null) {
                             // a newer local copy (pending reorder/rename) wins the next upload
                             if (syncMode == SyncRestoreMode.ADOPT && backupCategory.version < dbCategory.version) {
-                                return@mapIndexed dbCategory.id
+                                return@restoreCategory dbCategory.id
                             }
                             CategoryTable.update({ CategoryTable.id eq dbCategory.id }) {
                                 it[name] = backupCategory.name
@@ -107,7 +145,7 @@ object BackupCategoryHandler {
                                 }
                                 it[isSyncing] = true
                             }
-                            return@mapIndexed dbCategory.id
+                            return@restoreCategory dbCategory.id
                         }
 
                         // sync mirrors the server list; a plain restore appends new categories at the end
@@ -124,6 +162,10 @@ object BackupCategoryHandler {
                             }.value
                     }
             }
+        }
+        val categoryIds = restoredIds.toList()
+
+        restoreHierarchy(userId, backupCategories, categoryIds, backupTree)
 
         Category.normalizeCategories(userId)
 
@@ -145,5 +187,43 @@ object BackupCategoryHandler {
         return backupCategories.withIndex().associate { (index, backupCategory) ->
             backupCategory.order to categoryIds[index]
         }
+    }
+
+    /**
+     * fork (Komikku port): applies parents and Smart Category bindings of a backup that knows about them. A backup
+     * without hierarchy leaves the local hierarchy alone; a parent that would create a cycle is ignored.
+     */
+    private fun restoreHierarchy(
+        userId: Int,
+        backupCategories: List<BackupCategory>,
+        categoryIds: List<Int>,
+        backupTree: CategoryTree,
+    ) {
+        val defaultCategoryId = Category.getDefaultCategoryId(userId)
+        var changedBindings = false
+        transaction {
+            backupCategories.forEachIndexed { index, backupCategory ->
+                val categoryId = categoryIds[index]
+                if (categoryId == defaultCategoryId) return@forEachIndexed
+
+                if (backupCategory.hierarchyKnown) {
+                    val parentId =
+                        backupTree.parentOf(index)?.let { categoryIds[it] }?.takeIf { it != defaultCategoryId && it != categoryId }
+                    if (Category.getCategoryTree(userId).canMove(categoryId, parentId)) {
+                        CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
+                            it[CategoryTable.parentId] = parentId
+                        }
+                    }
+                }
+                val trackStatus = backupCategory.trackStatus?.takeIf { UnifiedTrackStatus.fromValue(it) != null }
+                if (backupCategory.hierarchyKnown || trackStatus != null) {
+                    CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
+                        it[CategoryTable.trackStatus] = trackStatus
+                    }
+                    changedBindings = changedBindings || trackStatus != null
+                }
+            }
+        }
+        if (changedBindings) SmartCategories.syncUser(userId)
     }
 }

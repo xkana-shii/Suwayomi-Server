@@ -7,6 +7,10 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import suwayomi.tachidesk.manga.impl.chapter.SmartMergeOverrideChange
+import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
+import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.builtins.ListSerializer
@@ -334,7 +338,20 @@ object BackupMangaHandler {
                     initialized = mangaRow[MangaTable.initialized],
                     memo = Json.encodeToString(mangaRow[MangaTable.memo]).encodeToByteArray(),
                     excludedScanlators = excludedScanlators,
-                )
+                ).apply {
+                    // fork (Komikku port): per-user scanlator rules
+                    val scanlatorSettings = ScanlatorSettings.fromRow(mangaRow)
+                    scanlatorPriority = scanlatorSettings.scanlatorPriority
+                    blacklistedChapters = scanlatorSettings.blacklistedChapters
+                    scanlatorRangeRules = scanlatorSettings.scanlatorRangeRules
+                    scanlatorSettingsPresent = scanlatorSettings.present
+                    smartScanlatorMergeOverride =
+                        when (scanlatorSettings.smartMergeOverride) {
+                            true -> "enabled"
+                            false -> "disabled"
+                            null -> "global"
+                        }
+                }
 
             if (flags.includeClientData) {
                 backupManga.meta = meta
@@ -353,6 +370,7 @@ object BackupMangaHandler {
                                 read = it.getOrNull(ChapterUserTable.isRead) ?: false,
                                 bookmark = it.getOrNull(ChapterUserTable.isBookmarked) ?: false,
                                 fillermark = it.getOrNull(ChapterUserTable.isFillermarked) ?: false,
+                                bookmarkColor = it.getOrNull(ChapterUserTable.bookmarkColor) ?: BookmarkColor.DEFAULT,
                                 lastPageRead = it.getOrNull(ChapterUserTable.lastPageRead) ?: 0,
                                 dateFetch = it[ChapterTable.fetchedAt].seconds.inWholeMilliseconds,
                                 dateUpload = it[ChapterTable.date_upload],
@@ -548,6 +566,8 @@ object BackupMangaHandler {
                 // delete thumbnail in case cached data still exists
                 clearThumbnail(mangaId)
 
+                if (!keepLocalManga) restoreScanlatorSettings(userId, mangaId, manga)
+
                 // fork: Mihon excluded scanlators and chapter filter flags are stored as WebUI meta
                 val mutableMeta = manga.meta.toMutableMap()
                 if (manga.excludedScanlators.isNotEmpty()) {
@@ -577,7 +597,51 @@ object BackupMangaHandler {
             restoreMangaTrackerData(userId, mangaId, tracks)
         }
 
+        // fork: the restored rules and chapters decide which chapters are hidden
+        ChapterVisibilityService.recompute(userId, listOf(mangaId))
+
         // TODO: insert/merge history
+    }
+
+    /**
+     * fork (Komikku port): restores the scanlator rules when the backup states them. Fillermarks (proto 15) stay
+     * fillermarks: unlike Komikku, this fork keeps them as their own feature, so they are not turned into blacklist
+     * entries.
+     */
+    private fun restoreScanlatorSettings(
+        userId: Int,
+        mangaId: Int,
+        manga: BackupManga,
+    ) {
+        val listsPresent =
+            manga.scanlatorSettingsPresent || manga.scanlatorPriority.isNotEmpty() || manga.blacklistedChapters.isNotEmpty() ||
+                manga.scanlatorRangeRules.isNotEmpty()
+        val override =
+            when (manga.smartScanlatorMergeOverride) {
+                "enabled" -> SmartMergeOverrideChange(true)
+                "disabled" -> SmartMergeOverrideChange(false)
+                "global" -> SmartMergeOverrideChange(null)
+                else -> null
+            }
+        ScanlatorSettings.update(
+            userId,
+            mangaId,
+            blacklistedChapters = manga.blacklistedChapters.takeIf { listsPresent },
+            scanlatorPriority = manga.scanlatorPriority.takeIf { listsPresent },
+            scanlatorRangeRules = manga.scanlatorRangeRules.takeIf { listsPresent },
+            smartMergeOverride = override,
+        )
+    }
+
+    private fun restoredBookmarkColor(
+        backupChapter: BackupChapter,
+        bookmarked: Boolean,
+        localColor: Int?,
+    ): Int {
+        if (!bookmarked) return BookmarkColor.DEFAULT
+        val backupColor = backupChapter.bookmarkColor?.takeIf { backupChapter.bookmark && BookmarkColor.isValid(it) }
+        // a backup without a color (or with the default color) does not erase a local color
+        return backupColor?.takeIf { it != BookmarkColor.DEFAULT } ?: localColor ?: backupColor ?: BookmarkColor.DEFAULT
     }
 
     private fun getMangaChapterToRestoreInfo(
@@ -662,6 +726,7 @@ object BackupMangaHandler {
                     this[ChapterUserTable.isRead] = chapter.read
                     this[ChapterUserTable.lastPageRead] = chapter.lastPageRead.coerceAtLeast(0)
                     this[ChapterUserTable.isBookmarked] = chapter.bookmark
+                    this[ChapterUserTable.bookmarkColor] = restoredBookmarkColor(chapter, chapter.bookmark, null)
                     this[ChapterUserTable.isFillermarked] = chapter.fillermark
 
                     this[ChapterUserTable.version] = chapter.version
@@ -691,12 +756,21 @@ object BackupMangaHandler {
                 this[ChapterUserTable.chapter] = dbChapterId
                 this[ChapterUserTable.user] = userId
                 if (flags.includeChapters) {
+                    val localColor = userData?.get(ChapterUserTable.bookmarkColor)
                     if (syncMode == SyncRestoreMode.ADOPT) {
                         this[ChapterUserTable.isRead] = backupChapter.read
                         this[ChapterUserTable.lastPageRead] = backupChapter.lastPageRead.coerceAtLeast(0)
                         this[ChapterUserTable.isBookmarked] = backupChapter.bookmark
+                        this[ChapterUserTable.bookmarkColor] =
+                            if (backupChapter.bookmark) {
+                                backupChapter.bookmarkColor?.takeIf(BookmarkColor::isValid) ?: localColor ?: BookmarkColor.DEFAULT
+                            } else {
+                                BookmarkColor.DEFAULT
+                            }
                         this[ChapterUserTable.isFillermarked] = backupChapter.fillermark
                     } else {
+                        val bookmarked = backupChapter.bookmark || (userData?.get(ChapterUserTable.isBookmarked) ?: false)
+                        this[ChapterUserTable.bookmarkColor] = restoredBookmarkColor(backupChapter, bookmarked, localColor)
                         this[ChapterUserTable.isRead] =
                             backupChapter.read || (userData?.get(ChapterUserTable.isRead) ?: false)
                         this[ChapterUserTable.lastPageRead] =

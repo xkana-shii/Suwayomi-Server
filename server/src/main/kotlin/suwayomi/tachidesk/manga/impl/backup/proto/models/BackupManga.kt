@@ -67,4 +67,12 @@ data class BackupManga(
     @ProtoNumber(805) var customGenre: List<String>? = null,
     // suwayomi
     @ProtoNumber(9000) var meta: Map<String, String> = emptyMap(),
+    // fork (Komikku port): per-user scanlator rules, Komikku's numbers so backups are exchangeable
+    @ProtoNumber(614) var scanlatorPriority: List<String> = emptyList(),
+    @ProtoNumber(615) var blacklistedChapters: List<String> = emptyList(),
+    @ProtoNumber(616) var scanlatorRangeRules: List<String> = emptyList(),
+    /** "enabled" / "disabled" / "global"; null = a payload without this setting */
+    @ProtoNumber(618) var smartScanlatorMergeOverride: String? = null,
+    /** repeated fields cannot tell "unset" from "empty": states that 614-616 are authoritative */
+    @ProtoNumber(620) var scanlatorSettingsPresent: Boolean = false,
 )
