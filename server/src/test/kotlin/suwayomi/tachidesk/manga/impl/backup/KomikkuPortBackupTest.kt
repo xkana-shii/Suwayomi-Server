@@ -14,6 +14,7 @@ import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insertAndGetId
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.TestInstance
 import suwayomi.tachidesk.manga.impl.Category
@@ -172,7 +173,13 @@ class KomikkuPortBackupTest : ApplicationTest() {
         val shounen = create("Shounen", null)
         create("Reading", shounen, UnifiedTrackStatus.READING.value)
         val josei = create("Josei", null)
-        create("Reading", josei, UnifiedTrackStatus.READING.value)
+        val joseiReading = create("Reading", josei, UnifiedTrackStatus.READING.value)
+        transaction {
+            CategoryTable.update({ CategoryTable.id eq joseiReading }) {
+                it[hidden] = true
+                it[updateInterval] = 7
+            }
+        }
         Category.normalizeCategories(1)
 
         val backup = BackupCategoryHandler.backup(1, flags)
@@ -189,5 +196,9 @@ class KomikkuPortBackupTest : ApplicationTest() {
         assertEquals(setOf("Shounen", "Josei"), readings.map { byId.getValue(it.parentId!!).name }.toSet())
         assertTrue(readings.all { it.trackStatus == UnifiedTrackStatus.READING.value })
         assertTrue(categories.filter { it.name != "Reading" }.all { it.parentId == null })
+        val restoredJoseiReading = readings.single { byId.getValue(it.parentId!!).name == "Josei" }
+        assertTrue(restoredJoseiReading.hidden, "hidden state is restored")
+        assertEquals(7, restoredJoseiReading.updateInterval)
+        assertFalse(readings.single { it.id != restoredJoseiReading.id }.hidden)
     }
 }

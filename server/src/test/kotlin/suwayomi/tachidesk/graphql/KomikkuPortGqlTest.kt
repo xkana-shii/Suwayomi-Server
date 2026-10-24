@@ -223,6 +223,23 @@ class KomikkuPortGqlTest : GraphQLTest() {
         }
         graphql("mutation { updateCategory(input: { id: $id, patch: { updateInterval: 0 } }) { category { id } } }").assertHasError()
 
+        // a hidden subcategory does not count for the library tab of its parent
+        val parent =
+            graphql(
+                "mutation { createCategory(input: { name: \"Parent\" }) { category { id } } }",
+            ).dataPath("createCategory", "category", "id")
+        val child =
+            graphql("mutation { createCategory(input: { name: \"Child\", parentId: $parent }) { category { id } } }")
+                .dataPath("createCategory", "category", "id")
+        val (mangaId, _) = manga("GQL_HIDDEN", listOf(Triple("/1", 1f, "A")), listOf(1))
+        graphql("mutation { updateMangaCategories(input: { id: $mangaId, patch: { addToCategories: [$child] } }) { manga { id } } }")
+            .assertNoErrors()
+        val counts = "{ category(id: $parent) { all: subtreeMangaCount visible: subtreeMangaCount(includeHidden: false) } }"
+        assertEquals(1, graphql(counts).dataPath("category", "visible"))
+        graphql("mutation { updateCategory(input: { id: $child, patch: { hidden: true } }) { category { id } } }").assertNoErrors()
+        assertEquals(1, graphql(counts).dataPath("category", "all"))
+        assertEquals(0, graphql(counts).dataPath("category", "visible"))
+
         // another user cannot change it
         graphql("mutation { updateCategory(input: { id: $id, patch: { hidden: false } }) { category { id } } }", user = asUser2)
         assertEquals(true, graphql("{ category(id: $id) { hidden } }").dataPath("category", "hidden"))

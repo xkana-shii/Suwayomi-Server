@@ -75,8 +75,15 @@ class CategoryType(
         }
 
     @GraphQLDescription("fork: library manga in this category or any of its subcategories, each counted once")
-    fun subtreeMangaCount(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Int> =
-        dataFetchingEnvironment.getValueFromDataLoader("SubtreeMangaCountForCategoryDataLoader", id)
+    fun subtreeMangaCount(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        @GraphQLDescription("false: leave out hidden subcategories, like the library tabs")
+        includeHidden: Boolean? = null,
+    ): CompletableFuture<Int> =
+        dataFetchingEnvironment.getValueFromDataLoader(
+            if (includeHidden == false) "VisibleSubtreeMangaCountForCategoryDataLoader" else "SubtreeMangaCountForCategoryDataLoader",
+            id,
+        )
 
     fun meta(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<List<CategoryMetaType>> =
         dataFetchingEnvironment.getValueFromDataLoader<Int, List<CategoryMetaType>>("CategoryMetaDataLoader", id)

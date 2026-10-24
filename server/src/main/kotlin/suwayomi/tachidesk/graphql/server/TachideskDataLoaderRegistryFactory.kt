@@ -57,6 +57,7 @@ import suwayomi.tachidesk.graphql.dataLoaders.TrackerScoresDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.TrackerStatusesDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.TrackerTokenExpiredDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.UserDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.VisibleSubtreeMangaCountForCategoryDataLoader
 
 class TachideskDataLoaderRegistryFactory {
     companion object {
@@ -70,6 +71,7 @@ class TachideskDataLoaderRegistryFactory {
                 ScanlatorSettingsForMangaDataLoader(),
                 BookmarkColorsForMangaDataLoader(),
                 SubtreeMangaCountForCategoryDataLoader(),
+                VisibleSubtreeMangaCountForCategoryDataLoader(),
                 HasDuplicateChaptersForMangaDataLoader(),
                 LastReadChapterForMangaDataLoader(),
                 LatestReadChapterForMangaDataLoader(),

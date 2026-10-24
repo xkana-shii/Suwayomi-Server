@@ -111,8 +111,11 @@ class CategoryCountForMangaDataLoader : KotlinDataLoader<Int, Int> {
 }
 
 /** fork (Komikku port): library manga of a category's whole subtree, each manga counted once */
-class SubtreeMangaCountForCategoryDataLoader : KotlinDataLoader<Int, Int> {
-    override val dataLoaderName = "SubtreeMangaCountForCategoryDataLoader"
+open class SubtreeMangaCountForCategoryDataLoader(
+    /** false: hidden categories (and the subtrees below them) do not contribute, like the library tabs */
+    private val includeHidden: Boolean = true,
+) : KotlinDataLoader<Int, Int> {
+    override val dataLoaderName = if (includeHidden) "SubtreeMangaCountForCategoryDataLoader" else "VisibleSubtreeMangaCountForCategoryDataLoader"
 
     override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, Int> =
         DataLoaderFactory.newDataLoader { ids ->
@@ -120,7 +123,23 @@ class SubtreeMangaCountForCategoryDataLoader : KotlinDataLoader<Int, Int> {
                 val userId = graphQLContext.getAttribute(JavalinSetup.Attribute.TachideskUser).requireUser()
                 val defaultCategoryId = Category.getDefaultCategoryId(userId)
                 val tree = Category.getCategoryTree(userId)
-                val subtrees = ids.associateWith { id -> setOf(id) + tree.descendants(id) }
+                val hiddenIds =
+                    if (includeHidden) {
+                        emptySet()
+                    } else {
+                        transaction {
+                            CategoryTable
+                                .select(CategoryTable.id)
+                                .where { (CategoryTable.user eq userId) and (CategoryTable.hidden eq true) }
+                                .mapTo(HashSet()) { it[CategoryTable.id].value }
+                        }
+                    }
+                val subtrees =
+                    ids.associateWith { id ->
+                        (setOf(id) + tree.descendants(id)).filterNot { member ->
+                            member in hiddenIds || tree.ancestors(member).takeWhile { it != tree.parentOf(id) }.any { it in hiddenIds }
+                        }
+                    }
                 val allCategoryIds =
                     subtrees.values
                         .flatten()
@@ -150,3 +169,6 @@ class SubtreeMangaCountForCategoryDataLoader : KotlinDataLoader<Int, Int> {
             }
         }
 }
+
+/** fork: [SubtreeMangaCountForCategoryDataLoader] without hidden categories */
+class VisibleSubtreeMangaCountForCategoryDataLoader : SubtreeMangaCountForCategoryDataLoader(includeHidden = false)
