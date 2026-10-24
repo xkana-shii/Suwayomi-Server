@@ -39,7 +39,8 @@ The WebUI has no unit/component test suite (`pnpm test` is a placeholder upstrea
 | Reader | page list + image request, progress | 2 pages, PNG served, `lastPageRead` saved; WebUI reader resumed on saved page |
 | Fork APIs | fillermark toggle/filter, metadata edit/reset, nonLibraryCount, clearDatabase, createBackupAsync/createStatus, validateBackup, installMissingExtensionsFromBackup, restore of old fork backup, shutdownServer | all pass |
 | WebUI (browser) | custom WebUI `r3637`/`r3639` served by the upgraded server | library, categories, manga page (fork icons, stored filter, markdown, edit button, notes), reader + fillermark button, updates (fork grouping, compact rows, unread dots), history, library settings, about + shutdown; mobile width (375px) manga page |
-| WebUI update protection | flavor WEBUI, channel PREVIEW, network on | only fork URLs contacted; installed custom WebUI unchanged |
+| WebUI update protection | flavor WEBUI, channel PREVIEW, network on, before the fork release existed | only fork URLs contacted; installed custom WebUI unchanged |
+| WebUI auto-install | same settings, empty install, after the fork CI published `r3639` (pushed 2026-10-23 20:30) | `r3639` resolved via the fork mapping file, downloaded from `xkana-shii/Suwayomi-WebUI-preview`, MD5 verified, served |
 | Direct server launch | `java -jar` | works |
 
 ## Feature coverage

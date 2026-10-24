@@ -28,6 +28,8 @@ Fast-forwarding `main`/`master` to the integration branches keeps these numbers.
   already unusable with the fork before this integration; use PREVIEW (your current setting) or CUSTOM.
 
 Required release order: WebUI preview release `r3639` → server release → launcher release.
+Status 2026-10-24: the integration heads were pushed to `origin/master` and the fork CI published WebUI preview
+`r3639`, server preview `v2.4.2539` and launcher `1.0.15`; a fresh server installed `r3639` from the fork release.
 
 ## Runtime / build requirements
 
