@@ -30,19 +30,23 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.leftJoin
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.global.impl.sync.SyncManager
 import suwayomi.tachidesk.global.model.table.UserAccountTable
 import suwayomi.tachidesk.global.model.table.UserSettingsTable
 import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.impl.CategoryManga
 import suwayomi.tachidesk.manga.impl.Manga
+import suwayomi.tachidesk.manga.impl.category.CategoryUpdateSchedule
 import suwayomi.tachidesk.manga.model.dataclass.CategoryDataClass
 import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
 import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
+import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.server.serverConfig
@@ -51,6 +55,7 @@ import suwayomi.tachidesk.server.settings.value
 import suwayomi.tachidesk.util.HAScheduler
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.time.Instant
 import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.absoluteValue
@@ -392,7 +397,11 @@ class Updater : IUpdater {
                 reset()
             }
 
-            val includeInUpdateStatusToCategoryMap = categories.groupBy { it.includeInUpdate }
+            // fork (Komikku port): nested categories inherit update inclusion and intervals from their ancestors
+            val schedule = CategoryUpdateSchedule(Category.getCategoryList(userId, includeDefault = true))
+            val now = Instant.now().epochSecond
+            val dueIntervalCategoryIds = if (automatedUpdate) schedule.dueIntervalCategoryIds(now) else emptySet()
+            val includeInUpdateStatusToCategoryMap = categories.groupBy { schedule.effectiveIncludeInUpdate(it.id) }
             val excludedCategories = includeInUpdateStatusToCategoryMap[IncludeOrExclude.EXCLUDE].orEmpty()
             val includedCategories = includeInUpdateStatusToCategoryMap[IncludeOrExclude.INCLUDE].orEmpty()
             val unsetCategories = includeInUpdateStatusToCategoryMap[IncludeOrExclude.UNSET].orEmpty()
@@ -443,7 +452,24 @@ class Updater : IUpdater {
                             !excludedCategories.any { category ->
                                 mangasToCategoriesMap[it.id]?.contains(category) == true
                             }
+                    }.filter {
+                        !automatedUpdate ||
+                            schedule.isMangaDue(
+                                mangasToCategoriesMap[it.id].orEmpty().map { category ->
+                                    category.id
+                                },
+                                dueIntervalCategoryIds,
+                            )
                     }.toList()
+
+            // fork: the due interval categories were covered by this scheduled update
+            if (automatedUpdate && dueIntervalCategoryIds.isNotEmpty()) {
+                transaction {
+                    CategoryTable.update({ (CategoryTable.id inList dueIntervalCategoryIds) and (CategoryTable.user eq userId) }) {
+                        it[lastScheduledUpdateAt] = now
+                    }
+                }
+            }
             val skippedMangas = categoriesToUpdateMangas.subtract(mangasToUpdate.toSet()).toList()
 
             if (clear == true) {

@@ -62,6 +62,8 @@ object BackupCategoryHandler {
                     parentId = it[CategoryTable.parentId]?.toLong() ?: 0L
                     parentUid = it[CategoryTable.parentId]?.let(uidById::get) ?: 0L
                     trackStatus = it[CategoryTable.trackStatus]
+                    hidden = it[CategoryTable.hidden]
+                    updateInterval = it[CategoryTable.updateInterval]
                     hierarchyKnown = true
                 }
             }
@@ -213,6 +215,16 @@ object BackupCategoryHandler {
                         CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
                             it[CategoryTable.parentId] = parentId
                         }
+                    }
+                }
+                backupCategory.hidden?.let { hidden ->
+                    CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
+                        it[CategoryTable.hidden] = hidden
+                    }
+                }
+                if (backupCategory.hierarchyKnown || backupCategory.updateInterval != null) {
+                    CategoryTable.update({ CategoryTable.id eq categoryId and (CategoryTable.user eq userId) }) {
+                        it[CategoryTable.updateInterval] = backupCategory.updateInterval?.takeIf { interval -> interval in 1..365 }
                     }
                 }
                 val trackStatus = backupCategory.trackStatus?.takeIf { UnifiedTrackStatus.fromValue(it) != null }

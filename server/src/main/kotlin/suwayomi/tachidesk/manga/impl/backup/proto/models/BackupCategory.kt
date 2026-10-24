@@ -30,4 +30,8 @@ data class BackupCategory(
     @ProtoNumber(904) var parentUid: Long = 0,
     /** set by backups that know about the hierarchy: without it a 0 parent means "unknown" rather than "top level" */
     @ProtoNumber(907) var hierarchyKnown: Boolean = false,
+    /** Komikku's hidden category flag; null = not stated (keep the local state) */
+    @ProtoNumber(900) var hidden: Boolean? = null,
+    /** library update interval in days; null = the parent's interval or the global schedule */
+    @ProtoNumber(903) var updateInterval: Int? = null,
 )

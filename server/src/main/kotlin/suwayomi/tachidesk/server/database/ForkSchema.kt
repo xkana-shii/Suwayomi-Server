@@ -61,6 +61,9 @@ object ForkSchema {
             Triple("MANGAUSER", "SMART_MERGE_OVERRIDE", "BOOLEAN NULL"),
             Triple("CATEGORY", "PARENT_ID", "INT NULL"),
             Triple("CATEGORY", "TRACK_STATUS", "INT NULL"),
+            Triple("CATEGORY", "HIDDEN", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            Triple("CATEGORY", "UPDATE_INTERVAL", "INT NULL"),
+            Triple("CATEGORY", "LAST_SCHEDULED_UPDATE_AT", "BIGINT DEFAULT 0 NOT NULL"),
         ).forEach { (table, column, definition) ->
             if (!columnExists(table, column)) {
                 logger.info { "ForkSchema: adding ${table.toSqlName()}.$column" }

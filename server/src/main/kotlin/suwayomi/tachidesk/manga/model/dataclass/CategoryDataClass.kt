@@ -36,4 +36,7 @@ data class CategoryDataClass(
     // fork (Komikku port)
     val parentId: Int? = null,
     val trackStatus: Int? = null,
+    val hidden: Boolean = false,
+    val updateInterval: Int? = null,
+    val lastScheduledUpdateAt: Long = 0,
 )

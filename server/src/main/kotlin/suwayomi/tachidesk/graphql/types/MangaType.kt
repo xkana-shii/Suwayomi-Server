@@ -8,6 +8,7 @@
 package suwayomi.tachidesk.graphql.types
 
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import graphql.schema.DataFetchingEnvironment
@@ -69,6 +70,7 @@ class MangaType(
             dataFetchingEnvironment.getDataLoader<Int, Int>("ChapterFlagCountForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, Int>("HasDuplicateChaptersForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, MangaScanlatorSettingsType>("ScanlatorSettingsForMangaDataLoader")?.clear(mangaId)
+            dataFetchingEnvironment.getDataLoader<Int, List<Int>>("BookmarkColorsForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LastReadChapterForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LatestReadChapterForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LatestFetchedChapterForMangaDataLoader")?.clear(mangaId)
@@ -123,6 +125,10 @@ class MangaType(
         }
 
     // fork (Komikku port)
+    @GraphQLDescription("Distinct bookmark colors of the user's bookmarked chapters that are not hidden")
+    fun bookmarkColors(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<List<Int>> =
+        dataFetchingEnvironment.getValueFromDataLoader("BookmarkColorsForMangaDataLoader", id)
+
     fun scanlatorSettings(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaScanlatorSettingsType> =
         dataFetchingEnvironment.getValueFromDataLoader("ScanlatorSettingsForMangaDataLoader", id)
 

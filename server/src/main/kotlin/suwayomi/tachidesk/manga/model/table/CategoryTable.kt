@@ -35,6 +35,14 @@ object CategoryTable : IntIdTable() {
     val parentId = integer("parent_id").nullable()
     val trackStatus = integer("track_status").nullable()
 
+    // fork (Komikku port): hidden categories keep their manga and settings but are left out of the library tabs
+    val hidden = bool("hidden").default(false)
+
+    // fork (Komikku port): library update interval in days (null = inherit / global schedule) and the last scheduled
+    // update that covered this category (epoch seconds)
+    val updateInterval = integer("update_interval").nullable()
+    val lastScheduledUpdateAt = long("last_scheduled_update_at").default(0)
+
     init {
         index(false, id, user)
     }
@@ -54,4 +62,7 @@ fun CategoryTable.toDataClass(categoryEntry: ResultRow) =
         lastModifiedAt = categoryEntry[lastModifiedAt],
         parentId = categoryEntry[parentId],
         trackStatus = categoryEntry[trackStatus],
+        hidden = categoryEntry[hidden],
+        updateInterval = categoryEntry[updateInterval],
+        lastScheduledUpdateAt = categoryEntry[lastScheduledUpdateAt],
     )

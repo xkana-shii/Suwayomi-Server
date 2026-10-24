@@ -36,6 +36,10 @@ class CategoryType(
     val parentId: Int? = null,
     @GraphQLDescription("Smart Category binding: the unified tracker status (see UnifiedTrackStatus) this category follows")
     val trackStatus: Int? = null,
+    @GraphQLDescription("Hidden categories keep their manga but are left out of the library tabs")
+    val hidden: Boolean = false,
+    @GraphQLDescription("Automatic library update interval in days; null = the parent's interval or the global schedule")
+    val updateInterval: Int? = null,
 ) : Node {
     constructor(row: ResultRow) : this(
         row[CategoryTable.id].value,
@@ -47,6 +51,8 @@ class CategoryType(
         row[CategoryTable.isDefaultCategory],
         row[CategoryTable.parentId],
         row[CategoryTable.trackStatus],
+        row[CategoryTable.hidden],
+        row[CategoryTable.updateInterval],
     )
 
     constructor(dataClass: CategoryDataClass) : this(
@@ -59,6 +65,8 @@ class CategoryType(
         dataClass.isDefaultCategory,
         dataClass.parentId,
         dataClass.trackStatus,
+        dataClass.hidden,
+        dataClass.updateInterval,
     )
 
     fun mangas(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaNodeList> =

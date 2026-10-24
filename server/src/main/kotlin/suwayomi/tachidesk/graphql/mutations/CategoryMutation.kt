@@ -267,6 +267,12 @@ class CategoryMutation {
         val trackStatus: Int? = null,
         @GraphQLDescription("fork: remove the Smart Category binding")
         val clearTrackStatus: Boolean? = null,
+        @GraphQLDescription("fork: hide the category from the library tabs (its manga and settings are kept)")
+        val hidden: Boolean? = null,
+        @GraphQLDescription("fork: automatic library update interval in days (1-365)")
+        val updateInterval: Int? = null,
+        @GraphQLDescription("fork: follow the parent's interval or the global schedule again")
+        val clearUpdateInterval: Boolean? = null,
     )
 
     data class UpdateCategoryPayload(
@@ -311,7 +317,18 @@ class CategoryMutation {
             Category.setParent(userId, ids, if (patch.moveToTopLevel == true) null else patch.parentId)
         }
         val trackStatusChanged = patch.trackStatus != null || patch.clearTrackStatus == true
+        patch.updateInterval?.let { require(it in 1..365) { "'updateInterval' must be between 1 and 365 days" } }
         transaction {
+            if (patch.hidden != null) {
+                CategoryTable.update({
+                    CategoryTable.id inList ids and (CategoryTable.user eq userId) and (CategoryTable.isDefaultCategory eq false)
+                }) { update -> update[hidden] = patch.hidden }
+            }
+            if (patch.updateInterval != null || patch.clearUpdateInterval == true) {
+                CategoryTable.update({
+                    CategoryTable.id inList ids and (CategoryTable.user eq userId) and (CategoryTable.isDefaultCategory eq false)
+                }) { update -> update[updateInterval] = if (patch.clearUpdateInterval == true) null else patch.updateInterval }
+            }
             if (trackStatusChanged) {
                 CategoryTable.update({
                     CategoryTable.id inList ids and (CategoryTable.user eq userId) and (CategoryTable.isDefaultCategory eq false)

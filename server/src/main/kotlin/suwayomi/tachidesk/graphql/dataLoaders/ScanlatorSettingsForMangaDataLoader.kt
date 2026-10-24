@@ -11,10 +11,18 @@ import com.expediagroup.graphql.dataloader.KotlinDataLoader
 import graphql.GraphQLContext
 import org.dataloader.DataLoader
 import org.dataloader.DataLoaderFactory
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.server.getAttribute
+import suwayomi.tachidesk.graphql.server.primitives.inIds
 import suwayomi.tachidesk.graphql.types.MangaScanlatorSettingsType
 import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
+import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.ChapterUserTable
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 import suwayomi.tachidesk.server.JavalinSetup
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.settings.userConfig
@@ -40,6 +48,30 @@ class ScanlatorSettingsForMangaDataLoader : KotlinDataLoader<Int, MangaScanlator
                         global,
                     )
                 }
+            }
+        }
+}
+
+/** fork (Komikku port): the bookmark colors of a manga's bookmarked, visible chapters (library color filter) */
+class BookmarkColorsForMangaDataLoader : KotlinDataLoader<Int, List<Int>> {
+    override val dataLoaderName = "BookmarkColorsForMangaDataLoader"
+
+    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, List<Int>> =
+        DataLoaderFactory.newDataLoader { ids ->
+            future {
+                val userId = graphQLContext.getAttribute(JavalinSetup.Attribute.TachideskUser).requireUser()
+                val colorsByManga =
+                    transaction {
+                        ChapterTable
+                            .innerJoin(ChapterUserTable)
+                            .select(ChapterTable.manga, ChapterUserTable.bookmarkColor)
+                            .where {
+                                (ChapterTable.manga inIds ids) and (ChapterUserTable.user eq userId) and
+                                    (ChapterUserTable.isBookmarked eq true) and chapterVisibleOp()
+                            }.withDistinct()
+                            .groupBy({ it[ChapterTable.manga].value }, { it[ChapterUserTable.bookmarkColor] })
+                    }
+                ids.map { colorsByManga[it].orEmpty().sorted() }
             }
         }
 }

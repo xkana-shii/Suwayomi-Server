@@ -9,6 +9,7 @@ import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.LibraryUpdateStatus
 import suwayomi.tachidesk.graphql.types.UpdateStatus
 import suwayomi.tachidesk.manga.impl.Category
+import suwayomi.tachidesk.manga.impl.category.CategoryUpdateSchedule
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.server.JavalinSetup.future
 import uy.kohesive.injekt.injectLazy
@@ -34,9 +35,15 @@ class UpdateMutation {
         userId: Int,
         input: UpdateLibraryInput,
     ): CompletableFuture<UpdateLibraryPayload?> {
+        // fork (Komikku port): refreshing a category covers its whole subtree (nested categories)
+        val allCategories = Category.getCategoryList(userId)
+        val selectedIds =
+            input.categories?.let { selected ->
+                CategoryUpdateSchedule(Category.getCategoryList(userId, includeDefault = true)).withSubtrees(selected)
+            }
         updater.addCategoriesToUpdateQueue(
             userId,
-            Category.getCategoryList(userId).filter { input.categories?.contains(it.id) ?: true },
+            allCategories.filter { selectedIds?.contains(it.id) ?: true },
             clear = true,
             forceAll = !input.categories.isNullOrEmpty(),
         )
