@@ -135,7 +135,13 @@ class ScanlatorSettingsMutation {
         MangaType.clearCacheFor(mangaId, dataFetchingEnvironment)
         val manga =
             transaction {
-                MangaType(MangaTable.getWithUserData(userId).selectAll().where { MangaTable.id eq mangaId }.first())
+                MangaType(
+                    MangaTable
+                        .getWithUserData(userId)
+                        .selectAll()
+                        .where { MangaTable.id eq mangaId }
+                        .first(),
+                )
             }
         val settings =
             MangaScanlatorSettingsType.of(

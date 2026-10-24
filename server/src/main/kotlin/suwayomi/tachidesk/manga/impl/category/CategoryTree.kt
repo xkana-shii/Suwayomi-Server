@@ -51,7 +51,11 @@ class CategoryTree(
     }
 
     /** [ids] and all their ancestors: the categories a manga filed in [ids] "reaches" */
-    fun withAncestors(ids: Collection<Int>): Set<Int> = ids.filter { it in parentOf }.flatMapTo(LinkedHashSet()) { listOf(it) + ancestors(it) }
+    fun withAncestors(ids: Collection<Int>): Set<Int> =
+        ids.filter { it in parentOf }.flatMapTo(LinkedHashSet()) {
+            listOf(it) +
+                ancestors(it)
+        }
 
     fun depth(id: Int): Int = ancestors(id).size
 

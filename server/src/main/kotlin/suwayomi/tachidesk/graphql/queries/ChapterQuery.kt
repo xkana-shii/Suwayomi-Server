@@ -7,10 +7,8 @@
 
 package suwayomi.tachidesk.graphql.queries
 
-import com.expediagroup.graphql.generator.annotations.GraphQLDescription
-import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
-import org.jetbrains.exposed.v1.core.not
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
@@ -19,6 +17,7 @@ import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.not
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
@@ -52,6 +51,7 @@ import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import java.util.concurrent.CompletableFuture
 

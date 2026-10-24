@@ -10,11 +10,11 @@ package suwayomi.tachidesk.manga.model.table
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ReferenceOption
 import org.jetbrains.exposed.v1.core.and
-import org.jetbrains.exposed.v1.core.isNull
-import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.dao.id.IntIdTable
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.leftJoin
+import org.jetbrains.exposed.v1.core.or
 import suwayomi.tachidesk.global.model.table.UserAccountTable
 
 object ChapterUserTable : IntIdTable() {

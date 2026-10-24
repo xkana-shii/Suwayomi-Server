@@ -62,6 +62,7 @@ import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaMetaTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.manga.model.table.toDataClass
 import suwayomi.tachidesk.server.ApplicationDirs
@@ -71,7 +72,6 @@ import java.io.IOException
 import java.io.InputStream
 import java.time.Instant
 import kotlin.time.Duration.Companion.minutes
-import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 private val logger = KotlinLogging.logger { }
 
@@ -368,8 +368,10 @@ object Manga {
                 ChapterTable
                     .getWithUserData(userId)
                     .selectAll()
-                    .where { (ChapterTable.manga eq mangaId) and ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()) }
-                    .count()
+                    .where {
+                        (ChapterTable.manga eq mangaId) and
+                            ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp())
+                    }.count()
 
             val downloadCount =
                 ChapterTable
@@ -656,8 +658,10 @@ object Manga {
             ChapterTable
                 .getWithUserData(userId)
                 .selectAll()
-                .where { (ChapterTable.manga eq mangaId) and ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp()) }
-                .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
+                .where {
+                    (ChapterTable.manga eq mangaId) and
+                        ((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp())
+                }.orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
                 .map { ChapterTable.toDataClass(it) }
         }
 

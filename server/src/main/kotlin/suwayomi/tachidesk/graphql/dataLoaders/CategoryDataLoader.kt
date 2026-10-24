@@ -24,10 +24,10 @@ import suwayomi.tachidesk.graphql.server.primitives.inIds
 import suwayomi.tachidesk.graphql.types.CategoryNodeList
 import suwayomi.tachidesk.graphql.types.CategoryNodeList.Companion.toNodeList
 import suwayomi.tachidesk.graphql.types.CategoryType
+import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
-import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.server.JavalinSetup
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.user.requireUser
@@ -121,7 +121,11 @@ class SubtreeMangaCountForCategoryDataLoader : KotlinDataLoader<Int, Int> {
                 val defaultCategoryId = Category.getDefaultCategoryId(userId)
                 val tree = Category.getCategoryTree(userId)
                 val subtrees = ids.associateWith { id -> setOf(id) + tree.descendants(id) }
-                val allCategoryIds = subtrees.values.flatten().filter { it != defaultCategoryId }.toSet()
+                val allCategoryIds =
+                    subtrees.values
+                        .flatten()
+                        .filter { it != defaultCategoryId }
+                        .toSet()
                 val mangaByCategory =
                     transaction {
                         CategoryMangaTable

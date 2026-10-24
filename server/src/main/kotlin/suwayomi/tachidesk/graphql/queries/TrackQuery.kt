@@ -1,9 +1,7 @@
 package suwayomi.tachidesk.graphql.queries
 
-import suwayomi.tachidesk.manga.model.table.MangaStatus
-import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
-import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
@@ -44,7 +42,9 @@ import suwayomi.tachidesk.graphql.types.TrackRecordType
 import suwayomi.tachidesk.graphql.types.TrackSearchType
 import suwayomi.tachidesk.graphql.types.TrackerNodeList
 import suwayomi.tachidesk.graphql.types.TrackerType
+import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
+import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.TrackRecordTable
 import suwayomi.tachidesk.manga.model.table.insertAll
 import suwayomi.tachidesk.server.JavalinSetup.future

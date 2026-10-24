@@ -7,10 +7,6 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import suwayomi.tachidesk.manga.impl.chapter.SmartMergeOverrideChange
-import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
-import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
-import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.builtins.ListSerializer
@@ -45,6 +41,10 @@ import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupChapter
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupHistory
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupManga
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupTracking
+import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
+import suwayomi.tachidesk.manga.impl.chapter.ScanlatorSettings
+import suwayomi.tachidesk.manga.impl.chapter.SmartMergeOverrideChange
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrack
 import suwayomi.tachidesk.manga.impl.track.tracker.model.toTrackRecordDataClass

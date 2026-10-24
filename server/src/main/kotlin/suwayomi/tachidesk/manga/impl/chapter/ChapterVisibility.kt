@@ -80,9 +80,19 @@ object ChapterBlacklist {
         return ((chapterNumber * 100).roundToInt() / 100.0).toString()
     }
 
-    private fun normalizedScanlator(scanlator: String?): String = scanlator.orEmpty().trim().lowercase().take(MAX_KEY_SCANLATOR_LENGTH)
+    private fun normalizedScanlator(scanlator: String?): String =
+        scanlator
+            .orEmpty()
+            .trim()
+            .lowercase()
+            .take(MAX_KEY_SCANLATOR_LENGTH)
 
-    private fun normalizedName(name: String): String = name.trim().lowercase().replace(whitespace, " ").take(MAX_KEY_NAME_LENGTH)
+    private fun normalizedName(name: String): String =
+        name
+            .trim()
+            .lowercase()
+            .replace(whitespace, " ")
+            .take(MAX_KEY_NAME_LENGTH)
 
     private data class HybridEntry(
         val number: String?,

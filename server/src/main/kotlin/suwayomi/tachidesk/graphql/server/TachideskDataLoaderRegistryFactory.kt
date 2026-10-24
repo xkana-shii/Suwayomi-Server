@@ -11,8 +11,6 @@ import com.expediagroup.graphql.dataloader.KotlinDataLoaderRegistryFactory
 import suwayomi.tachidesk.graphql.dataLoaders.CategoriesForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryCountForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryDataLoader
-import suwayomi.tachidesk.graphql.dataLoaders.ScanlatorSettingsForMangaDataLoader
-import suwayomi.tachidesk.graphql.dataLoaders.SubtreeMangaCountForCategoryDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.CategoryMetaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.ChapterCountForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.ChapterDataLoader
@@ -43,9 +41,11 @@ import suwayomi.tachidesk.graphql.dataLoaders.MangaMetaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.NonLibraryCountForSourceDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.PermissionsForUserDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.RolesForUserDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.ScanlatorSettingsForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourceDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourceMetaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.SourcesForExtensionDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.SubtreeMangaCountForCategoryDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.TrackRecordCountForMangaIdDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.TrackRecordCountForTrackerIdDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.TrackRecordDataLoader

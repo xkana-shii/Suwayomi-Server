@@ -2,7 +2,6 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
-import suwayomi.tachidesk.manga.impl.category.SmartCategories
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import org.jetbrains.exposed.v1.core.LikePattern
@@ -30,7 +29,7 @@ import suwayomi.tachidesk.graphql.types.MangaType
 import suwayomi.tachidesk.graphql.types.MetaInput
 import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.impl.CategoryManga
-import suwayomi.tachidesk.manga.impl.util.lang.isEmpty
+import suwayomi.tachidesk.manga.impl.category.SmartCategories
 import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryMetaTable

@@ -22,8 +22,8 @@ import suwayomi.tachidesk.graphql.server.primitives.inIds
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
-import suwayomi.tachidesk.server.settings.value
 import suwayomi.tachidesk.server.settings.userConfig
+import suwayomi.tachidesk.server.settings.value
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 

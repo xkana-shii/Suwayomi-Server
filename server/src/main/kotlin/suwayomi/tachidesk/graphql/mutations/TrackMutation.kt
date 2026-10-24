@@ -2,8 +2,6 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
-import suwayomi.tachidesk.manga.impl.track.UnifiedTrackerEdits
-import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
@@ -15,6 +13,8 @@ import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.TrackRecordType
 import suwayomi.tachidesk.graphql.types.TrackerType
 import suwayomi.tachidesk.manga.impl.track.Track
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackerEdits
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.model.table.TrackRecordTable
 import suwayomi.tachidesk.server.JavalinSetup.future

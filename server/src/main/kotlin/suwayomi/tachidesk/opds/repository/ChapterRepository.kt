@@ -33,6 +33,7 @@ import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.opds.dto.OpdsChapterListAcqEntry
 import suwayomi.tachidesk.opds.dto.OpdsChapterMetadataAcqEntry
@@ -40,7 +41,6 @@ import suwayomi.tachidesk.opds.dto.OpdsHistoryAcqEntry
 import suwayomi.tachidesk.opds.dto.OpdsLibraryUpdateAcqEntry
 import suwayomi.tachidesk.server.settings.userConfig
 import suwayomi.tachidesk.server.settings.value
-import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 object ChapterRepository {
     private fun opdsItemsPerPage(userId: Int): Int = userConfig.opdsItemsPerPage.value(userId)
@@ -78,8 +78,13 @@ object ChapterRepository {
                 conditions.add(ChapterTable.manga eq mangaId)
 
                 when (filter) {
-                    "unread" -> conditions.add((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp())
-                    "read" -> conditions.add(ChapterUserTable.isRead eq true)
+                    "unread" -> {
+                        conditions.add((ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp())
+                    }
+
+                    "read" -> {
+                        conditions.add(ChapterUserTable.isRead eq true)
+                    }
                 }
                 if (userConfig.opdsShowOnlyDownloadedChapters.value(userId)) {
                     conditions.add(ChapterUserTable.isDownloaded eq true)
@@ -359,7 +364,13 @@ object ChapterRepository {
         transaction {
             val baseQuery = ChapterTable.getWithUserData(userId).select(ChapterTable.id).where { ChapterTable.manga eq mangaId }
             val readCount = baseQuery.copy().andWhere { ChapterUserTable.isRead eq true }.count()
-            val unreadCount = baseQuery.copy().andWhere { (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and chapterVisibleOp() }.count()
+            val unreadCount =
+                baseQuery
+                    .copy()
+                    .andWhere {
+                        (ChapterUserTable.isRead eq false or (ChapterUserTable.isRead.isNull())) and
+                            chapterVisibleOp()
+                    }.count()
             val allCount = baseQuery.copy().count()
 
             mapOf(

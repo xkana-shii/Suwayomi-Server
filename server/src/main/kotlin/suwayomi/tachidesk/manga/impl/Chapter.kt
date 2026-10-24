@@ -37,6 +37,7 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.jdbc.upsert
 import suwayomi.tachidesk.global.model.table.UserAccountTable
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.track.Track
 import suwayomi.tachidesk.manga.impl.util.updateChapterDownloadDir
@@ -52,7 +53,6 @@ import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.PageTable
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.manga.model.table.toDataClass
-import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.server.settings.userConfig
 import suwayomi.tachidesk.server.settings.value
 import java.time.Instant

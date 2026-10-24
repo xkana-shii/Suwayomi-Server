@@ -2,10 +2,8 @@
 
 package suwayomi.tachidesk.graphql.mutations
 
-import com.expediagroup.graphql.generator.annotations.GraphQLDescription
-import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
-import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -29,6 +27,8 @@ import suwayomi.tachidesk.graphql.types.MetaInput
 import suwayomi.tachidesk.graphql.types.SyncConflictInfoType
 import suwayomi.tachidesk.manga.impl.Chapter
 import suwayomi.tachidesk.manga.impl.Manga
+import suwayomi.tachidesk.manga.impl.chapter.BookmarkColor
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.chapter.getChapterDownloadReadyById
 import suwayomi.tachidesk.manga.impl.sync.KoreaderSyncService
 import suwayomi.tachidesk.manga.model.table.ChapterMetaTable

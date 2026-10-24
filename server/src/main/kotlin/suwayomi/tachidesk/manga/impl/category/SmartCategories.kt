@@ -96,8 +96,10 @@ object SmartCategories {
                 val libraryMangaIds =
                     MangaUserTable
                         .select(MangaUserTable.manga)
-                        .where { (MangaUserTable.manga inIds mangaIds) and (MangaUserTable.user eq userId) and (MangaUserTable.inLibrary eq true) }
-                        .map { it[MangaUserTable.manga].value }
+                        .where {
+                            (MangaUserTable.manga inIds mangaIds) and (MangaUserTable.user eq userId) and
+                                (MangaUserTable.inLibrary eq true)
+                        }.map { it[MangaUserTable.manga].value }
                 if (libraryMangaIds.isEmpty()) return@transaction
 
                 val tree = Category.getCategoryTree(userId)

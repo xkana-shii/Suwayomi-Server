@@ -1,6 +1,5 @@
 package suwayomi.tachidesk.graphql.types
 
-import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
@@ -13,6 +12,7 @@ import suwayomi.tachidesk.graphql.server.primitives.PageInfo
 import suwayomi.tachidesk.graphql.server.primitives.getNodeListFromDataLoaders
 import suwayomi.tachidesk.graphql.types.TrackRecordNodeList.Companion.toNodeList
 import suwayomi.tachidesk.manga.impl.track.Track
+import suwayomi.tachidesk.manga.impl.track.TrackerMetadata
 import suwayomi.tachidesk.manga.impl.track.tracker.DeletableTracker
 import suwayomi.tachidesk.manga.impl.track.tracker.Tracker
 import suwayomi.tachidesk.manga.model.table.TrackRecordTable

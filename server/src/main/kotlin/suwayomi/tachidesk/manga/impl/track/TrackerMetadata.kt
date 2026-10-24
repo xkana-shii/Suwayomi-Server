@@ -47,7 +47,9 @@ object TrackerMetadata {
     ): MetadataDetails {
         val provider =
             providerByTracker[trackerId]?.invoke()
-                ?: throw IllegalArgumentException("${TrackerManager.getTracker(trackerId)?.name ?: trackerId} does not provide manga metadata")
+                ?: throw IllegalArgumentException(
+                    "${TrackerManager.getTracker(trackerId)?.name ?: trackerId} does not provide manga metadata",
+                )
         val remoteId =
             transaction {
                 TrackRecordTable

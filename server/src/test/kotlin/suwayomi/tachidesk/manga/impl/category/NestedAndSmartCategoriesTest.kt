@@ -160,10 +160,11 @@ class NestedAndSmartCategoriesTest : ApplicationTest() {
     fun `tracker changes file library manga into smart categories without touching manual ones`() {
         val user2 =
             transaction {
-                UserAccountTable.insertAndGetId {
-                    it[username] = "smart-categories-user-2"
-                    it[password] = "password"
-                }.value
+                UserAccountTable
+                    .insertAndGetId {
+                        it[username] = "smart-categories-user-2"
+                        it[password] = "password"
+                    }.value
             }.also(createdUserIds::add)
         val shounen = category("Shounen")
         val reading = category("Reading", shounen, UnifiedTrackStatus.READING)
@@ -180,12 +181,23 @@ class NestedAndSmartCategoriesTest : ApplicationTest() {
 
         // a manga that is not in the library is never filed
         val notInLibrary = createLibraryManga("SMART_CATEGORIES_NOT_IN_LIBRARY")
-        transaction { MangaUserTable.update({ MangaUserTable.manga eq notInLibrary and (MangaUserTable.user eq 1) }) { it[inLibrary] = false } }
+        transaction {
+            MangaUserTable.update(
+                { MangaUserTable.manga eq notInLibrary and (MangaUserTable.user eq 1) },
+            ) { it[inLibrary] = false }
+        }
         track(notInLibrary, TrackerManager.MYANIMELIST, MyAnimeList.READING)
         assertEquals(emptySet(), membership(notInLibrary))
 
         // unbinding the last tracker leaves the membership as it is (no usable status)
-        val recordId = transaction { TrackRecordTable.selectAll().where { TrackRecordTable.mangaId eq mangaId }.single()[TrackRecordTable.id].value }
+        val recordId =
+            transaction {
+                TrackRecordTable
+                    .selectAll()
+                    .where { TrackRecordTable.mangaId eq mangaId }
+                    .single()[TrackRecordTable.id]
+                    .value
+            }
         kotlinx.coroutines.runBlocking { Track.unbind(1, recordId) }
         assertEquals(setOf(completed, manual), membership(mangaId))
         assertTrue(user2Reading > 0)

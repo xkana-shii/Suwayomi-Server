@@ -7,9 +7,6 @@ package suwayomi.tachidesk.manga.impl.backup.proto.handlers
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
-import suwayomi.tachidesk.manga.impl.category.SmartCategories
-import suwayomi.tachidesk.manga.impl.category.CategoryTree
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -22,6 +19,9 @@ import suwayomi.tachidesk.manga.impl.Category.modifyCategoriesMetas
 import suwayomi.tachidesk.manga.impl.backup.BackupFlags
 import suwayomi.tachidesk.manga.impl.backup.proto.SyncRestoreMode
 import suwayomi.tachidesk.manga.impl.backup.proto.models.BackupCategory
+import suwayomi.tachidesk.manga.impl.category.CategoryTree
+import suwayomi.tachidesk.manga.impl.category.SmartCategories
+import suwayomi.tachidesk.manga.impl.track.UnifiedTrackStatus
 import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.server.database.dbTransaction
 

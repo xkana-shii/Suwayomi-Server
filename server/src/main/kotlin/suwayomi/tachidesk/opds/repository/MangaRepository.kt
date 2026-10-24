@@ -35,6 +35,7 @@ import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.MangaUserTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
+import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 import suwayomi.tachidesk.manga.model.table.getWithUserData
 import suwayomi.tachidesk.opds.dto.OpdsLibraryFeedResult
 import suwayomi.tachidesk.opds.dto.OpdsMangaAcqEntry
@@ -46,7 +47,6 @@ import suwayomi.tachidesk.opds.util.OpdsStringUtil.formatSourceName
 import suwayomi.tachidesk.server.settings.userConfig
 import suwayomi.tachidesk.server.settings.value
 import suwayomi.tachidesk.server.user.ForbiddenException
-import suwayomi.tachidesk.manga.model.table.chapterVisibleOp
 
 /**
  * Applies dynamic filters based on the current user configuration and cross-filters.

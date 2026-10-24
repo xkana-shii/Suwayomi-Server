@@ -1,6 +1,5 @@
 package suwayomi.tachidesk.server.settings
 
-import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import com.typesafe.config.ConfigFactory
 import io.github.config4k.ClassContainer
 import io.github.config4k.readers.SelectReader
@@ -14,6 +13,7 @@ import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.upsert
 import suwayomi.tachidesk.global.model.table.UserSettingsTable
+import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import java.util.concurrent.ConcurrentHashMap
 
 /**

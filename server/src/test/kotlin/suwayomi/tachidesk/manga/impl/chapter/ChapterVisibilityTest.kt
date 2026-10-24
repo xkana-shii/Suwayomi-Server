@@ -19,7 +19,7 @@ class ChapterVisibilityTest {
         number: Double,
         scanlator: String?,
         name: String = "Chapter $number",
-        url: String = "/c/${nextId}",
+        url: String = "/c/$nextId",
         sourceOrder: Int = nextId,
     ) = VisibilityChapter(nextId++, url, name, number, scanlator, sourceOrder)
 
