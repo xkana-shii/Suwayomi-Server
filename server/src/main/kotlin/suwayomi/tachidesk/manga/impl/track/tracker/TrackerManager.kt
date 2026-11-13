@@ -18,7 +18,6 @@ object TrackerManager {
     const val MANGA_UPDATES = 7
     const val KAVITA = 8
     const val SUWAYOMI = 9
-
     const val MANGABAKA = 11
 
     val myAnimeList = MyAnimeList(MYANIMELIST)
@@ -32,7 +31,6 @@ object TrackerManager {
 //    val komga = Komga(KOMGA)
     val mangaUpdates = MangaUpdates(MANGA_UPDATES)
     val mangaBaka = MangaBaka(MANGABAKA)
-
 //    val kavita = Kavita(context, KAVITA)
 //    val suwayomi = Suwayomi(SUWAYOMI)
 

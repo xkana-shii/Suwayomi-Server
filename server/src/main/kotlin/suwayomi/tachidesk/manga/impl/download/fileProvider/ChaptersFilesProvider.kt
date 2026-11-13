@@ -32,7 +32,6 @@ import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse
 import suwayomi.tachidesk.manga.model.table.ChapterTable
-import suwayomi.tachidesk.manga.model.table.ChapterUserTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.server.serverConfig
 import java.io.File
@@ -238,11 +237,11 @@ abstract class ChaptersFilesProvider<Type : FileType>(
         // Calculate and save Koreader hash for CBZ files (try existing cbz candidate first)
         val chapterFile = File(resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId))
         if (chapterFile.exists()) {
-            val koreaderHash = KoreaderHelper.hashContents(chapterFile)
+            val koreaderHash = KoreaderHelper.hashContents(chapterFile.inputStream())
             if (koreaderHash != null) {
                 transaction {
-                    ChapterUserTable.update({ ChapterUserTable.chapter eq chapterId }) {
-                        it[ChapterUserTable.koreaderHash] = koreaderHash
+                    ChapterTable.update({ ChapterTable.id eq chapterId }) {
+                        it[ChapterTable.koreaderHash] = koreaderHash
                     }
                 }
             }

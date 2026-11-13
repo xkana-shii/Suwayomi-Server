@@ -7,6 +7,7 @@ import com.expediagroup.graphql.generator.annotations.GraphQLIgnore
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.http.UploadedFile
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.withTimeout
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -75,9 +76,15 @@ class BackupMutation {
                 )
 
             withTimeout(10.seconds) {
-                ProtoBackupImport.notifyFlow.first {
-                    ProtoBackupImport.getRestoreState(restoreId) != null
-                }
+                ProtoBackupImport.notifyFlow
+                    .onSubscription {
+                        val state = ProtoBackupImport.getRestoreState(restoreId)
+                        if (state != null && state != ProtoBackupImport.BackupRestoreState.Idle) {
+                            emit(Unit)
+                        }
+                    }.first {
+                        ProtoBackupImport.getRestoreState(restoreId) != null
+                    }
             }
 
             RestoreBackupPayload(
@@ -240,9 +247,12 @@ class BackupMutation {
 
         val backup = ProtoBackupExport.createBackup(userId, getEffectiveBackupFlags(permissions, input))
 
-        TemporaryFileStorage.saveFile(filename, backup)
+        val token = TemporaryFileStorage.saveFile(filename, backup)
 
-        return CreateBackupPayload(input?.clientMutationId, "/api/graphql/files/backup/$filename")
+        return CreateBackupPayload(
+            clientMutationId = input?.clientMutationId,
+            url = "/api/graphql/files/backup/$token",
+        )
     }
 
     // New: async create that returns a create job id and a status entry (mirrors restore)

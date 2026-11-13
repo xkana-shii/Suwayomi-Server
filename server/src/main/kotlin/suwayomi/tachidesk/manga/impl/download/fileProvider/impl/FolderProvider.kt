@@ -12,7 +12,7 @@ import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.FileDeletionHelper
-import suwayomi.tachidesk.manga.model.table.ChapterUserTable
+import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.ApplicationDirs
 import uy.kohesive.injekt.injectLazy
 import java.io.BufferedOutputStream
@@ -82,7 +82,7 @@ class FolderProvider(
         }
         if (chapterDirDeleted) {
             transaction {
-                ChapterUserTable.update({ ChapterUserTable.chapter eq chapterId }) {
+                ChapterTable.update({ ChapterTable.id eq chapterId }) {
                     it[koreaderHash] = null
                 }
             }

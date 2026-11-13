@@ -19,11 +19,12 @@ import suwayomi.tachidesk.manga.impl.util.getMangaDownloadDir
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.resolveExistingChapterDownloadFolder
 import suwayomi.tachidesk.manga.impl.util.storage.FileDeletionHelper
-import suwayomi.tachidesk.manga.model.table.ChapterUserTable
+import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.ApplicationDirs
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.InputStream
+import java.nio.file.NoSuchFileException
 import java.util.zip.Deflater
 
 private val applicationDirs: ApplicationDirs by injectLazy()
@@ -37,8 +38,18 @@ class ArchiveProvider(
         resolveExistingChapterCbzPath(mangaId, chapterId) ?: getChapterCbzPath(mangaId, chapterId)
 
     override suspend fun getImageFiles(): List<FileType.ZipFile> {
-        val zipFile = ZipFile.builder().setFile(existingOrCanonicalCbzPath()).get()
-        return zipFile.entries.toList().map { FileType.ZipFile(it) }
+        val cbzPath = existingOrCanonicalCbzPath()
+        return try {
+            ZipFile.builder().setFile(cbzPath).get().use { zipFile ->
+                zipFile.entries
+                    .toList()
+                    .filter { !it.isDirectory }
+                    .map { FileType.ZipFile(it) }
+            }
+        } catch (e: NoSuchFileException) {
+            // "no download present" should throw NoSuchElementException
+            throw NoSuchElementException("CBZ archive does not exist", e)
+        }
     }
 
     override suspend fun getImageInputStream(image: FileType.ZipFile): InputStream =
@@ -111,7 +122,7 @@ class ArchiveProvider(
         }
         if (cbzDeleted) {
             transaction {
-                ChapterUserTable.update({ ChapterUserTable.chapter eq chapterId }) {
+                ChapterTable.update({ ChapterTable.id eq chapterId }) {
                     it[koreaderHash] = null
                 }
             }

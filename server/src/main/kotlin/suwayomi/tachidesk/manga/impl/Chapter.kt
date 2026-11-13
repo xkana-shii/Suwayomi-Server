@@ -36,6 +36,8 @@ import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.jdbc.upsert
+import suwayomi.tachidesk.global.impl.sync.SyncYomiSyncService
+import suwayomi.tachidesk.global.impl.sync.chapterTombstoneKey
 import suwayomi.tachidesk.global.model.table.UserAccountTable
 import suwayomi.tachidesk.manga.impl.chapter.ChapterVisibilityService
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
@@ -410,6 +412,15 @@ object Chapter {
                 it[chaptersLastFetchedAt] = Instant.now().epochSecond
             }
         }
+
+        val tombstoneKey = { chapterUrl: String ->
+            chapterTombstoneKey(mangaEntry[MangaTable.sourceReference], mangaEntry[MangaTable.url], chapterUrl)
+        }
+        val deletedIds = chaptersIdsToDelete.toSet()
+        SyncYomiSyncService.recordChapterListChange(
+            removedKeys = chaptersInDb.filter { it.id in deletedIds }.map { tombstoneKey(it.url) },
+            addedKeys = chaptersToInsert.map { tombstoneKey(it.url) },
+        )
 
         // fork: blacklist entries and Smart Scanlator Merge choices follow the new chapter list (before auto downloads)
         ChapterVisibilityService.recomputeForManga(mangaEntry[MangaTable.id].value)
